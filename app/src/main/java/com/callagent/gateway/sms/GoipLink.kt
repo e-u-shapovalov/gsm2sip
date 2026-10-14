@@ -83,7 +83,7 @@ class GoipLink(
 
     private fun runLoop() {
         // Retried rather than given up: after a reboot the gateway starts
-        // before hotspot.sh has put local_ip on wlan1, and binding to an
+        // before rtptun.sh has put local_ip on quic0, and binding to an
         // address that is not there yet fails.
         while (running) {
             try {
