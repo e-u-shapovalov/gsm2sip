@@ -47,6 +47,9 @@ import kotlin.concurrent.thread
 class GatewayService : Service() {
 
     private var sipClient: SipClient? = null
+    /** This phone as a line of a GoIP SMS server (goip_server set); SMS and
+     *  USSD then go through it instead of SIP MESSAGE. */
+    @Volatile private var goipLink: com.callagent.gateway.sms.GoipLink? = null
     private var batteryChargeGuard: BatteryChargeGuard? = null
     private var orchestrator: CallOrchestrator? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -504,6 +507,11 @@ class GatewayService : Service() {
             try {
                 val queue = SmsStore.pending(this)
                 if (queue.isEmpty()) return@thread
+                val goip = goipLink
+                if (goip != null) {
+                    flushSmsViaGoip(goip, queue, reason)
+                    return@thread
+                }
                 val sip = sipClient
                 if (sip == null || !sip.registered) {
                     broadcastLog("SMS: ${queue.size} queued, waiting for registration")
@@ -907,8 +915,123 @@ class GatewayService : Service() {
         if (out.isNotBlank()) Log.w(TAG, "markInboxRead: $out")
     }
 
+    // ── GoIP SMS server line ─────────────────────────────
+
+    /** Start the GoIP line once, if configured.  Independent of SIP: it has
+     *  its own server and keeps running across SIP reconnects. */
+    private fun ensureGoipLink() {
+        if (goipLink != null) return
+        val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
+        val host = prefs.getString("goip_server", "")?.trim().orEmpty()
+        val line = prefs.getString("goip_line", "")?.trim().orEmpty()
+        if (host.isEmpty() || line.isEmpty()) return
+        val link = com.callagent.gateway.sms.GoipLink(
+            context = this,
+            host = host,
+            port = prefs.getInt("goip_port", 44444),
+            line = line,
+            password = prefs.getString("goip_pass", "")?.trim().orEmpty(),
+            ownNumber = prefs.getString("own_number", "")?.trim().orEmpty(),
+            localIp = prefs.getString("local_ip", "")?.trim().orEmpty(),
+            listener = object : com.callagent.gateway.sms.GoipLink.Listener {
+                override fun onSendRequest(
+                    session: String, ref: String, number: String, text: String, smsNo: Int
+                ): Boolean = acceptGoipSend(session, ref, number, text, smsNo)
+                override fun onLog(line: String) = broadcastLog(line)
+            }
+        )
+        goipLink = link
+        link.start()
+        // Anything that arrived before the line was up.
+        thread(name = "goip-first-flush") {
+            repeat(15) {
+                if (stopped || link.registered) return@repeat
+                try { Thread.sleep(2000) } catch (_: InterruptedException) { return@thread }
+            }
+            if (link.registered) flushSmsQueue("goip registered")
+        }
+    }
+
+    private fun flushSmsViaGoip(
+        goip: com.callagent.gateway.sms.GoipLink,
+        queue: List<com.callagent.gateway.sms.PendingSms>,
+        reason: String
+    ) {
+        if (!goip.registered) {
+            broadcastLog("SMS: ${queue.size} queued, GoIP line not registered yet")
+            scheduleSmsRetry()
+            return
+        }
+        broadcastLog("SMS: to GoIP server ${queue.size} message(s) [$reason]")
+        markInboxRead()
+        for (sms in queue) {
+            if (goip.deliverInbound(sms.from, sms.text)) {
+                SmsStore.remove(this, sms.id)
+                broadcastLog("SMS: ${sms.id} from ${sms.from} accepted by GoIP server")
+            } else {
+                SmsStore.markAttempt(this, sms.id)
+                broadcastLog("SMS: ${sms.id} from ${sms.from} not acknowledged — queued")
+                scheduleSmsRetry()
+                return
+            }
+        }
+    }
+
+    /** The GoIP server asked us to send.  Same outbox as the SIP path; the id
+     *  carries what the reports need: goip:<session>:<ref>:<sms_no>. */
+    private fun acceptGoipSend(session: String, ref: String, number: String, text: String, smsNo: Int): Boolean {
+        if (!hasSendSms() || text.isEmpty() || number.isEmpty()) return false
+        val id = "$GOIP_ID_PREFIX$session:$ref:$smsNo"
+        if (SmsOutbox.get(this, id) != null) return true
+        val measured = measureSms(text)
+        SmsOutbox.add(
+            this,
+            OutboundSms(
+                id = id, to = number, text = text,
+                subId = android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                parts = measured?.parts ?: 0,
+                encoding = measured?.encoding ?: ""
+            )
+        )
+        CallLogStore.addEntry(
+            this,
+            CallLogEntry(
+                direction = "OUT",
+                number = number,
+                timestamp = System.currentTimeMillis(),
+                durationSec = 0,
+                type = CallLogStore.TYPE_SMS,
+                text = text,
+                smsId = id,
+                encoding = measured?.encoding ?: "",
+                parts = measured?.parts ?: 0,
+                status = "pending"
+            )
+        )
+        dispatchOutbox()
+        return true
+    }
+
+    private fun sendGoipReport(sms: OutboundSms, event: String): Boolean {
+        val goip = goipLink ?: return false
+        val f = sms.id.removePrefix(GOIP_ID_PREFIX).split(':')
+        val session = f.getOrNull(0) ?: return true
+        val ref = f.getOrNull(1) ?: return true
+        val no = f.getOrNull(2)?.toIntOrNull() ?: return true
+        when (event) {
+            // The server waits on its send session for these; a late one is
+            // simply ignored there, so there is nothing to retry.
+            "submitted" -> goip.reportSent(session, ref, true, no, 0)
+            "failed" -> goip.reportSent(session, ref, false, no, 500)
+            "delivered" -> return goip.reportDelivered(no, 0)
+            "undelivered" -> return goip.reportDelivered(no, sms.status.toIntOrNull() ?: 64)
+        }
+        return true
+    }
+
     /** One report, as a SIP MESSAGE with a JSON body. */
     private fun sendSmsReport(sms: OutboundSms, event: String): Boolean {
+        if (sms.id.startsWith(GOIP_ID_PREFIX)) return sendGoipReport(sms, event)
         val sip = sipClient
         if (sip == null || !sip.registered) {
             broadcastLog("SMS report $event for ${sms.id} deferred — not registered")
@@ -1197,6 +1320,7 @@ class GatewayService : Service() {
             srtpRequested = prefs.getBoolean("srtp_enabled", false)
         )
         sipClient = sip
+        ensureGoipLink()
 
         val orch = CallOrchestrator(this, sip)
         orch.listener = object : CallOrchestrator.OrchestratorListener {
@@ -1334,6 +1458,8 @@ class GatewayService : Service() {
         stopped = true
         onlineSince = 0L
         Log.i(TAG, "Stopping gateway")
+        goipLink?.stop()
+        goipLink = null
         orchestrator?.stop()
         sipClient?.stop()
         orchestrator = null
@@ -1716,6 +1842,8 @@ class GatewayService : Service() {
     }
 
     companion object {
+        /** Outbox ids of messages the GoIP server asked us to send. */
+        private const val GOIP_ID_PREFIX = "goip:"
         private const val TAG = "GatewayService"
         private const val LOG_BUFFER_SIZE = 200
         /** Ring buffer of recent log messages — survives activity pause/resume. */
