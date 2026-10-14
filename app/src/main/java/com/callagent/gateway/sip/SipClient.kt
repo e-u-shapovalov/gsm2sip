@@ -62,6 +62,8 @@ class SipClient(
     private val running = AtomicBoolean(false)
     @Volatile var registered = false; private set
     @Volatile private var lastRegisterTime = 0L
+    /** Refresh period derived from the expiry the registrar actually granted. */
+    @Volatile private var reregisterIntervalMs = REREGISTER_INTERVAL_MS
     /** Tracks last time we got ANY response from server (REGISTER, OPTIONS, etc.) */
     @Volatile private var lastServerResponseTime = 0L
     @Volatile private var registrationLatch: CountDownLatch? = null
@@ -436,7 +438,17 @@ class SipClient(
                 registered = true
                 lastRegisterTime = System.currentTimeMillis()
                 lastServerResponseTime = lastRegisterTime
-                uiLog("Registered with $serverDomain")
+                // The registrar may cap the 3600 we ask for -- Askozia grants
+                // 60s -- and a binding refreshed on our own schedule then
+                // lapses after a minute.  Refresh at half of what was granted.
+                val granted = Regex("""expires=(\d+)""", RegexOption.IGNORE_CASE)
+                    .find(msg.contact.orEmpty())?.groupValues?.get(1)?.toLongOrNull()
+                    ?: msg.header("expires")?.trim()?.toLongOrNull()
+                reregisterIntervalMs = granted
+                    ?.let { (it * 1000 / 2).coerceIn(15_000L, REREGISTER_INTERVAL_MS) }
+                    ?: REREGISTER_INTERVAL_MS
+                uiLog("Registered with $serverDomain" +
+                    (granted?.let { " (expires ${it}s, refresh every ${reregisterIntervalMs / 1000}s)" } ?: ""))
                 registrationLatch?.countDown()
                 listener?.onRegistered()
                 true
@@ -798,7 +810,7 @@ class SipClient(
                     // unauthenticated requests an hour, each answered 401 and
                     // recorded as an auth failure, which is the pattern
                     // fail2ban counts; it banned this gateway's IP repeatedly.
-                    if (System.currentTimeMillis() - lastRegisterTime > REREGISTER_INTERVAL_MS) {
+                    if (System.currentTimeMillis() - lastRegisterTime > reregisterIntervalMs) {
                         uiLog("Refreshing registration")
                         registered = false
                         if (!register()) {
