@@ -406,7 +406,7 @@ class RtpSession(
         // No appops assertion and no propagation sleep here.  CallOrchestrator
         // .startRtp() runs the very same grant sequence synchronously
         // immediately before this, so doing it again was a second round of
-        // eight root commands — each of pm/appops/cmd forks an app_process —
+        // root commands — each of pm/appops/cmd forks an app_process —
         // followed by a blind 500ms wait, on the path between answering the
         // call and the first frame of audio.  The wait was there for a retry
         // loop that no longer exists: this only ever made one attempt.
@@ -1867,8 +1867,8 @@ class RtpSession(
         try {
             val pkg = context.packageName
             val uidProbe = if (Build.VERSION.SDK_INT >= 29) "--uid " else ""
-            // Ask before acting.  The sequence below is eight root commands,
-            // two of them killing PermissionController, and pm/appops/cmd each
+            // Ask before acting.  The sequence below is several root commands
+            // and pm/appops/cmd each
             // fork an app_process; running it unconditionally every 15s cost
             // hundreds of process launches across a single call to re-grant a
             // permission that was already granted.  One `appops get` is cheap,
@@ -1877,7 +1877,7 @@ class RtpSession(
             val probe = RootShell.execForOutput(
                 "appops get ${uidProbe}$pkg RECORD_AUDIO 2>&1"
             )
-            if (probe.contains("allow", ignoreCase = true)) {
+            if (RootShell.appOpAllowed(probe)) {
                 Log.d(TAG, "appops RECORD_AUDIO still allow — nothing to do")
                 return
             }
@@ -1893,18 +1893,14 @@ class RtpSession(
                 "appops set $pkg AUTO_REVOKE_PERMISSIONS_IF_UNUSED ignore 2>&1; " else ""
             val uidFlag = if (Build.VERSION.SDK_INT >= 29) "--uid " else ""
             val result = RootShell.execForOutput(
-                "killall com.google.android.permissioncontroller 2>/dev/null; " +
-                "killall com.android.permissioncontroller 2>/dev/null; " +
                 "pm grant $pkg android.permission.RECORD_AUDIO 2>&1; " +
                 autoRevoke +
                 "appops set ${uidFlag}$pkg RECORD_AUDIO allow 2>&1; " +
                 "appops set $pkg RECORD_AUDIO allow 2>&1; " +
-                "killall com.google.android.permissioncontroller 2>/dev/null; " +
-                "killall com.android.permissioncontroller 2>/dev/null; " +
                 "appops get ${uidFlag}$pkg RECORD_AUDIO 2>&1"
             )
             val elapsed = System.currentTimeMillis() - t0
-            val allowed = result.contains("allow", ignoreCase = true)
+            val allowed = RootShell.appOpAllowed(result)
             Log.i(TAG, "appops re-assert: [$result] ok=$allowed (${elapsed}ms)")
 
             if (!allowed) {

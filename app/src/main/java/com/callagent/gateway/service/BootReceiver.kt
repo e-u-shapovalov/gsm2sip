@@ -128,18 +128,14 @@ class BootReceiver : BroadcastReceiver() {
                 val autoRevoke = if (Build.VERSION.SDK_INT >= 30)
                     "appops set $pkg AUTO_REVOKE_PERMISSIONS_IF_UNUSED ignore 2>&1; " else ""
                 val result = RootShell.execForOutput(
-                    "killall com.google.android.permissioncontroller 2>/dev/null; " +
-                    "killall com.android.permissioncontroller 2>/dev/null; " +
                     "pm grant $pkg android.permission.RECORD_AUDIO 2>&1; " +
                     autoRevoke +
                     "appops set ${uidFlag}$pkg RECORD_AUDIO allow 2>&1; " +
                     "appops set $pkg RECORD_AUDIO allow 2>&1; " +
-                    "killall com.google.android.permissioncontroller 2>/dev/null; " +
-                    "killall com.android.permissioncontroller 2>/dev/null; " +
                     "appops get ${uidFlag}$pkg RECORD_AUDIO 2>&1"
                 )
                 val elapsed = System.currentTimeMillis() - t0
-                val allowed = result.contains("allow", ignoreCase = true)
+                val allowed = RootShell.appOpAllowed(result)
                 Log.i(TAG, "Early RECORD_AUDIO: [$result] ok=$allowed (${elapsed}ms)")
 
                 if (!allowed) {

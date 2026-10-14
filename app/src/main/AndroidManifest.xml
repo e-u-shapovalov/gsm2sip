@@ -38,6 +38,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Privileged: lets the gateway start its microphone FGS from boot with
+         no visible Activity (while-in-use exemption).  Must stay in step with
+         privapp-permissions-gateway.xml, enforce mode refuses to boot otherwise. -->
+    <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Boot & wake -->

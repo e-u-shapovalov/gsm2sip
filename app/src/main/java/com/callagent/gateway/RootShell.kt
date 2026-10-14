@@ -187,6 +187,19 @@ object RootShell {
     }
 
     /**
+     * True when every mode in `appops get` output is allow.
+     *
+     * `appops get --uid <pkg>` prints the UID mode and, when one is set, the
+     * package mode on its own line.  Searching for "allow" anywhere passes on
+     * `Uid mode: RECORD_AUDIO: foreground` followed by `RECORD_AUDIO: allow`,
+     * while AudioFlinger goes by the UID mode and keeps the capture silent.
+     */
+    fun appOpAllowed(output: String): Boolean {
+        val modes = Regex("""RECORD_AUDIO: (\w+)""").findAll(output).map { it.groupValues[1] }.toList()
+        return modes.isNotEmpty() && modes.all { it == "allow" }
+    }
+
+    /**
      * Tear the shell down and release everyone waiting on it.
      *
      * Giving up on a command is not enough on its own: the worker is still

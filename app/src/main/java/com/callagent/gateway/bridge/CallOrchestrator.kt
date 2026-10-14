@@ -1136,14 +1136,14 @@ class CallOrchestrator(
             val uidProbe = if (Build.VERSION.SDK_INT >= 29) "--uid " else ""
             // This sits directly between the call being answered and the first
             // frame of audio, so ask before acting: one `appops get` costs a
-            // single root round-trip, where the grant sequence below is eight
+            // single root round-trip, where the grant sequence below is several
             // commands and forks an app_process for each of pm/appops/cmd.
             // In the steady state the permission is already allowed and this
             // returns immediately.
             val probe = RootShell.execForOutput(
                 "appops get ${uidProbe}$pkg RECORD_AUDIO 2>&1"
             )
-            if (probe.contains("allow", ignoreCase = true)) {
+            if (RootShell.appOpAllowed(probe)) {
                 Log.i(TAG, "appops RECORD_AUDIO already allow — skipping grant")
                 return
             }
@@ -1155,18 +1155,14 @@ class CallOrchestrator(
                 "appops set $pkg AUTO_REVOKE_PERMISSIONS_IF_UNUSED ignore 2>&1; " else ""
             val uidFlag = if (Build.VERSION.SDK_INT >= 29) "--uid " else ""
             val result = RootShell.execForOutput(
-                "killall com.google.android.permissioncontroller 2>/dev/null; " +
-                "killall com.android.permissioncontroller 2>/dev/null; " +
                 "pm grant $pkg android.permission.RECORD_AUDIO 2>&1; " +
                 autoRevoke +
                 "appops set ${uidFlag}$pkg RECORD_AUDIO allow 2>&1; " +
                 "appops set $pkg RECORD_AUDIO allow 2>&1; " +
-                "killall com.google.android.permissioncontroller 2>/dev/null; " +
-                "killall com.android.permissioncontroller 2>/dev/null; " +
                 "appops get ${uidFlag}$pkg RECORD_AUDIO 2>&1"
             )
             val elapsed = System.currentTimeMillis() - t0
-            val allowed = result.contains("allow", ignoreCase = true)
+            val allowed = RootShell.appOpAllowed(result)
             Log.i(TAG, "appops RECORD_AUDIO: [$result] ok=$allowed (${elapsed}ms)")
 
             if (!allowed) {

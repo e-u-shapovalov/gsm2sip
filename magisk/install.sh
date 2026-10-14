@@ -85,35 +85,12 @@ else
     ui_print "! tinymix: no build for $DEVICE_ABI, leaving the ROM's in place"
 fi
 
-# ── Hide PermissionController ─────────────────────────
-# PermissionController sets RECORD_AUDIO appop to MODE_FOREGROUND which
-# denies AudioRecord for foreground services on cold boot (no Activity
-# in TOP state).  Hiding the APK via Magisk overlay prevents it from
-# running at all.  On a dedicated gateway device, permission management
-# UI is never used — the module grants all permissions in service.sh.
-PC_HIDDEN=false
-for PC_PATH in \
-    /system/priv-app/PermissionController \
-    /system/product/priv-app/PermissionController \
-    /system/system_ext/priv-app/PermissionController \
-    /system/priv-app/GooglePermissionController \
-    /system/product/priv-app/GooglePermissionController \
-; do
-    if [ -d "$PC_PATH" ]; then
-        # Create overlay directory with .replace to hide the real one
-        PC_OVERLAY="$MODPATH${PC_PATH}"
-        mkdir -p "$PC_OVERLAY"
-        touch "$PC_OVERLAY/.replace"
-        ui_print "- Hiding PermissionController: $PC_PATH"
-        PC_HIDDEN=true
-    fi
-done
-if [ "$PC_HIDDEN" = "false" ]; then
-    # Fallback: create the common AOSP path anyway
-    mkdir -p "$MODPATH/system/priv-app/PermissionController"
-    touch "$MODPATH/system/priv-app/PermissionController/.replace"
-    ui_print "- PermissionController path not found, using default overlay"
-fi
+# PermissionController is left alone.  On Android 11+ it lives in the
+# com.android.permission APEX, where a /system overlay cannot reach it, and
+# PackageManager refuses to boot without exactly one permission controller —
+# disabling it is a bootloop with no remote way back.
+# Any overlay left over from an earlier version of this module goes away
+# together with the old $MODPATH.
 
 # ── Set permissions ───────────────────────────────────
 set_perm_recursive $MODPATH 0 0 0755 0644
@@ -142,7 +119,6 @@ ui_print "- SIP-GSM Gateway installed as priv-app"
 ui_print "- Privileged permissions configured:"
 ui_print "    CAPTURE_AUDIO_OUTPUT, MODIFY_PHONE_STATE,"
 ui_print "    READ_PRIVILEGED_PHONE_STATE, CALL_PRIVILEGED"
-ui_print "- PermissionController hidden (cold boot audio fix)"
 ui_print "- Runtime permissions will be auto-granted on boot"
 ui_print ""
 ui_print "- Reboot required to activate"
