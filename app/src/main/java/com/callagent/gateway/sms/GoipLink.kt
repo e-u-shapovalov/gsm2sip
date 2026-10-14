@@ -149,8 +149,13 @@ class GoipLink(
             registered = ok
             return
         }
+        // Never the password: PASSWORD and USSD packets carry it.
+        Log.d(TAG, "GoIP <- ${p.replace(password, "***").take(160)}")
         val tok = p.split(' ')
-        if (tok.size < 2) return
+        if (tok.size < 2) {
+            Log.w(TAG, "GoIP: unparsed packet: ${p.replace(password, "***").take(160)}")
+            return
+        }
         val cmd = tok[0]
         val id = tok[1]
         when (cmd) {
