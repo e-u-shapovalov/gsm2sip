@@ -82,21 +82,29 @@ class GoipLink(
     }
 
     private fun runLoop() {
-        try {
-            server = InetAddress.getByName(host)
-            val s = (if (localIp.isNotEmpty()) DatagramSocket(java.net.InetSocketAddress(localIp, 0))
-                     else DatagramSocket()).apply { soTimeout = 1000 }
-            socket = s
-            listener.onLog("GoIP: line $line -> $host:$port from ${s.localSocketAddress}")
-            Thread({ receiveLoop(s) }, "goip-recv").start()
-            while (running) {
-                sendKeepalive()
-                sleepQuiet(KEEPALIVE_MS)
-                sessions.values.removeAll { System.currentTimeMillis() - it.lastSeen > SESSION_TTL_MS }
+        // Retried rather than given up: after a reboot the gateway starts
+        // before hotspot.sh has put local_ip on wlan1, and binding to an
+        // address that is not there yet fails.
+        while (running) {
+            try {
+                server = InetAddress.getByName(host)
+                val s = (if (localIp.isNotEmpty()) DatagramSocket(java.net.InetSocketAddress(localIp, 0))
+                         else DatagramSocket()).apply { soTimeout = 1000 }
+                socket = s
+                listener.onLog("GoIP: line $line -> $host:$port from ${s.localSocketAddress}")
+                Thread({ receiveLoop(s) }, "goip-recv").start()
+                while (running) {
+                    sendKeepalive()
+                    sleepQuiet(KEEPALIVE_MS)
+                    sessions.values.removeAll { System.currentTimeMillis() - it.lastSeen > SESSION_TTL_MS }
+                }
+            } catch (e: Exception) {
+                registered = false
+                try { socket?.close() } catch (_: Exception) {}
+                if (!running) return
+                listener.onLog("GoIP: link not up (${e.message}) — retry in ${RETRY_MS / 1000}s")
+                sleepQuiet(RETRY_MS)
             }
-        } catch (e: Exception) {
-            if (running) Log.e(TAG, "GoIP link failed: ${e.message}", e)
-            listener.onLog("GoIP: link failed — ${e.message}")
         }
     }
 
@@ -275,6 +283,7 @@ class GoipLink(
     companion object {
         private const val TAG = "GoipLink"
         private const val KEEPALIVE_MS = 20_000L
+        private const val RETRY_MS = 10_000L
         private const val SESSION_TTL_MS = 10 * 60_000L
         private const val ACK_TRIES = 5
         private const val ACK_WAIT_MS = 3_000L
