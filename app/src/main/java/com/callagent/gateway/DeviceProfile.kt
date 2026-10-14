@@ -1046,8 +1046,10 @@ data class DeviceProfile(
             musicVolPercent = 20,
             captureGain = 1,
             playbackGain = 1,
-            // Speech measured at RMS 600-2300, pauses at ~8.
-            noiseGateThreshold = 30,
+            // No gate: the digital downlink is already silent between words
+            // (RMS ~4-8), and gating it chopped word tails and made the line
+            // noise pump on and off — heard as hiss on every word.
+            noiseGateThreshold = 0,
             echoGateThreshold = 300,
             doubleTalkRatio = 1.5f,
             requireSpeakerMode = false,

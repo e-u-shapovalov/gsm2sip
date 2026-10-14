@@ -208,6 +208,63 @@ func (f *fifo) pop(out []int16) int {
 	return n
 }
 
+// decimator low-passes and downsamples capture taken at the DSP's native rate.
+// Asking the record front-end for 8 kHz directly leaves the conversion to the
+// DSP, and wideband (VoLTE) speech came out with hiss on the sibilants.
+type decimator struct {
+	factor int
+	taps   []float64
+	hist   []float64
+	pos    int
+}
+
+func newDecimator(inRate, outRate int) *decimator {
+	factor := inRate / outRate
+	n := 16*factor + 1
+	cutoff := 0.45 * float64(outRate) / float64(inRate) // cycles/sample, ~3.6 kHz at 8k out
+	taps := make([]float64, n)
+	sum := 0.0
+	for i := range taps {
+		m := float64(i - n/2)
+		sinc := 2 * cutoff
+		if m != 0 {
+			sinc = math.Sin(2*math.Pi*cutoff*m) / (math.Pi * m)
+		}
+		// Blackman window
+		w := 0.42 - 0.5*math.Cos(2*math.Pi*float64(i)/float64(n-1)) + 0.08*math.Cos(4*math.Pi*float64(i)/float64(n-1))
+		taps[i] = sinc * w
+		sum += taps[i]
+	}
+	for i := range taps {
+		taps[i] /= sum
+	}
+	return &decimator{factor: factor, taps: taps, hist: make([]float64, n)}
+}
+
+// process converts len(in) input samples into len(in)/factor output samples.
+func (d *decimator) process(in []int16, out []int16) {
+	n := len(d.hist)
+	o := 0
+	for i, v := range in {
+		d.hist[d.pos] = float64(v)
+		d.pos = (d.pos + 1) % n
+		if (i+1)%d.factor != 0 {
+			continue
+		}
+		acc := 0.0
+		for k, t := range d.taps {
+			acc += t * d.hist[(d.pos+k)%n]
+		}
+		if acc > 32767 {
+			acc = 32767
+		} else if acc < -32768 {
+			acc = -32768
+		}
+		out[o] = int16(math.Round(acc))
+		o++
+	}
+}
+
 func rms(data []int16) float64 {
 	var sum float64
 	for _, s := range data {
@@ -220,9 +277,10 @@ func run() error {
 	card := flag.Int("card", 0, "ALSA card")
 	inDev := flag.Int("in", 27, "capture PCM (27 = MultiMedia9)")
 	outDev := flag.Int("out", 1, "playback PCM (1 = MultiMedia2)")
-	rate := flag.Int("rate", 8000, "sample rate: 8000 or 16000")
+	rate := flag.Int("rate", 8000, "sample rate on stdin/stdout: 8000 or 16000")
+	capRate := flag.Int("cap-rate", 48000, "capture PCM rate, a multiple of -rate")
 	periodMs := flag.Int("period-ms", 20, "period length")
-	maxQueueMs := flag.Int("max-queue-ms", 120, "agent audio kept ahead of playback")
+	maxQueueMs := flag.Int("max-queue-ms", 200, "agent audio kept ahead of playback")
 	flag.Parse()
 	if unsafe.Sizeof(hwParams{}) != 608 || unsafe.Sizeof(swParams{}) != 136 || unsafe.Sizeof(transfer{}) != 24 {
 		return errors.New("requires the 64-bit ALSA ABI")
@@ -230,7 +288,11 @@ func run() error {
 	if *rate != 8000 && *rate != 16000 {
 		return errors.New("rate must be 8000 or 16000")
 	}
+	if *capRate%*rate != 0 {
+		return errors.New("-cap-rate must be a multiple of -rate")
+	}
 	period := *rate * *periodMs / 1000
+	capPeriod := *capRate * *periodMs / 1000
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGPIPE)
 	defer cancel()
@@ -240,7 +302,7 @@ func run() error {
 		return err
 	}
 	defer out.close()
-	in, err := openPCM(*card, *inDev, *rate, period, 4, true)
+	in, err := openPCM(*card, *inDev, *capRate, capPeriod, 4, true)
 	if err != nil {
 		return err
 	}
@@ -271,13 +333,20 @@ func run() error {
 	}()
 
 	// capture PCM -> stdout
+	dec := newDecimator(*capRate, *rate)
 	go func() {
+		c := make([]int16, capPeriod)
 		s := make([]int16, period)
 		raw := make([]byte, period*2)
 		for {
-			if e := in.transfer(ctx, s); e != nil {
+			if e := in.transfer(ctx, c); e != nil {
 				errs <- fmt.Errorf("capture: %w", e)
 				return
+			}
+			if dec.factor == 1 {
+				copy(s, c)
+			} else {
+				dec.process(c, s)
 			}
 			for i, v := range s {
 				raw[2*i] = byte(v)
