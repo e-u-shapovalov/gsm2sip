@@ -1044,10 +1044,18 @@ data class DeviceProfile(
             },
             halCallActiveVsids = listOf("11c05000"),
             captureSilenceFrames = 300,
-            silenceLocalAudio = true,
+            // Not AudioManager: setMicrophoneMute reaches the HAL as
+            // voice_set_mic_mute, i.e. 'Voice Tx Mute', which drops the whole
+            // uplink including the injected audio.  The mixer setup mutes the
+            // mic leg alone with 'Voice Tx Device Mute'.
+            silenceLocalAudio = false,
             mixerCaptureCmd = buildString {
-                // Opening the capture front-end reprograms its mixers.
+                // Opening the capture front-end reprograms its mixers, and
+                // VOICE_CALL opens incall-rec-uplink-and-downlink: drop the
+                // uplink (our own injected audio) on every record front-end.
                 append("tinymix 'MultiMedia1 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia4 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia8 Mixer VOC_REC_UL' 0 2>/dev/null; ")
                 append("tinymix 'MultiMedia9 Mixer VOC_REC_UL' 0 2>/dev/null; ")
                 append("tinymix 'Voice Rx Device Mute' 1 4294967295 20 2>/dev/null; ")
                 append("tinymix 'Voice Tx Device Mute' 1 4294967295 20 2>/dev/null; ")
@@ -1071,7 +1079,10 @@ data class DeviceProfile(
             doubleTalkRatio = 1.5f,
             requireSpeakerMode = true,
             incallMusicParam = "incall_music_enabled",
-            voiceDownlinkWorks = true,
+            // VOICE_DOWNLINK is routed by the policy to TELEPHONY_RX and the
+            // HAL opens afe-proxy-record for it, which reads near-silence
+            // (rawCapRMS 2-8).  VOICE_CALL goes through incall-rec instead.
+            voiceDownlinkWorks = false,
             voiceCallVolPercent = 0,
             playbackLeaksIntoCapture = false,
             routeChangeDelayMs = 500,
