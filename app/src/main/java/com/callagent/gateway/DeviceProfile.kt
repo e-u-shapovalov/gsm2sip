@@ -430,6 +430,10 @@ data class DeviceProfile(
                     device == "sunfish" || board == "sunfish" || hw == "sunfish" ->
                     sm6150()
 
+                // Snapdragon 835 (MSM8998) with WCD9335 (tasha) — Xiaomi Mi 6.
+                board.contains("msm8998") ->
+                    msm8998()
+
                 // Generic Qualcomm — try incall_music, skip WCD9304-specific controls
                 hw.contains("qcom") || hw.contains("qualcomm") ->
                     genericQualcomm()
@@ -967,6 +971,111 @@ data class DeviceProfile(
             routeChangeDelayMs = 500,
             audioRouteSettleDelayMs = 500,
             audioStopSettleDelayMs = 18_000,
+            appopsPropagationMs = 300,
+        )
+
+        /** Qualcomm MSM8998 (Snapdragon 835) with WCD9335 (tasha) — Xiaomi Mi 6,
+         *  LineageOS 22.2.
+         *
+         *  Same mixer set as SM6150: Incall_Music Audio Mixer MultiMedia1/2/5/9
+         *  and MultiMedia{1,4,8,9} Mixer VOC_REC_DL/UL; the Voice* mutes are
+         *  3-element and write-only (reads return "operation not permitted").
+         *  No 'Voc Rec Config' and no DEC MUX names from WCD9375.
+         *
+         *  Differences that matter:
+         *  - QcRilAudio itself sets vsid=0x11c05000 (VoiceMMode1);call_state=2
+         *    on a VoLTE call and voice_extn reports is_call_active:1, so the HAL
+         *    runs in-call record without help.  Announcing it again is harmless.
+         *  - audio_policy_configuration.xml has TELEPHONY_TX but no
+         *    incall_music_uplink mixPort, so the track cannot be routed to
+         *    Telephony Tx; it plays as media and the Incall_Music mixers carry
+         *    it into the uplink (the S4 Mini way).  All four front-ends are
+         *    opened since the HAL picks one at track creation.
+         */
+        fun msm8998() = DeviceProfile(
+            name = "MSM8998 (WCD9335)",
+            mixerSetupCmd = buildString {
+                // Digital bridge both ways: the phone's own mic and speaker
+                // stay out of the call.  Tx Device Mute drops only the mic leg
+                // of the uplink; Tx Mute would also drop the injected audio.
+                append("tinymix 'Voice Rx Device Mute' 1 4294967295 20 2>/dev/null; ")
+                append("tinymix 'Voice Tx Mute' 0 4294967295 20 2>/dev/null; ")
+                append("tinymix 'Voice Tx Device Mute' 1 4294967295 20 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia1' 1 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 1 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia5' 1 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia9' 1 2>/dev/null; ")
+                // Downlink only: the uplink carries what we inject.
+                append("tinymix 'MultiMedia1 Mixer VOC_REC_DL' 1 2>/dev/null; ")
+                append("tinymix 'MultiMedia1 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia4 Mixer VOC_REC_DL' 1 2>/dev/null; ")
+                append("tinymix 'MultiMedia4 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia8 Mixer VOC_REC_DL' 1 2>/dev/null; ")
+                append("tinymix 'MultiMedia8 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia9 Mixer VOC_REC_DL' 1 2>/dev/null; ")
+                append("tinymix 'MultiMedia9 Mixer VOC_REC_UL' 0 2>/dev/null")
+            },
+            mixerRestoreCmd = buildString {
+                append("tinymix 'Voice Rx Device Mute' 0 4294967295 20 2>/dev/null; ")
+                append("tinymix 'Voice Tx Device Mute' 0 4294967295 20 2>/dev/null; ")
+                append("tinymix 'Voice Tx Mute' 0 4294967295 20 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia1' 0 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 0 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia5' 0 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia9' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia1 Mixer VOC_REC_DL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia1 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia4 Mixer VOC_REC_DL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia4 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia8 Mixer VOC_REC_DL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia8 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia9 Mixer VOC_REC_DL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia9 Mixer VOC_REC_UL' 0 2>/dev/null")
+            },
+            mixerIncallMusicCmd = buildString {
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia1' 1 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 1 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia5' 1 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia9' 1 2>/dev/null; ")
+                append("tinymix 'Voice Tx Mute' 0 4294967295 20 2>/dev/null; ")
+                // The HAL rewrites the voice mutes while the call comes up.
+                append("tinymix 'Voice Rx Device Mute' 1 4294967295 20 2>/dev/null; ")
+                append("tinymix 'Voice Tx Device Mute' 1 4294967295 20 2>/dev/null")
+            },
+            halCallActiveVsids = listOf("11c05000"),
+            captureSilenceFrames = 300,
+            silenceLocalAudio = true,
+            mixerCaptureCmd = buildString {
+                // Opening the capture front-end reprograms its mixers.
+                append("tinymix 'MultiMedia1 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'MultiMedia9 Mixer VOC_REC_UL' 0 2>/dev/null; ")
+                append("tinymix 'Voice Rx Device Mute' 1 4294967295 20 2>/dev/null; ")
+                append("tinymix 'Voice Tx Device Mute' 1 4294967295 20 2>/dev/null; ")
+                append("echo -n 'MM1_DL='; tinymix 'MultiMedia1 Mixer VOC_REC_DL' 2>&1; ")
+                append("echo -n 'MM9_DL='; tinymix 'MultiMedia9 Mixer VOC_REC_DL' 2>&1; ")
+                append("echo -n 'MM9_UL='; tinymix 'MultiMedia9 Mixer VOC_REC_UL' 2>&1")
+            },
+            mixerVerifyCmd = buildString {
+                append("echo -n 'IncallMM1='; tinymix 'Incall_Music Audio Mixer MultiMedia1' 2>&1; ")
+                append("echo -n 'IncallMM2='; tinymix 'Incall_Music Audio Mixer MultiMedia2' 2>&1; ")
+                append("echo -n 'IncallMM5='; tinymix 'Incall_Music Audio Mixer MultiMedia5' 2>&1; ")
+                append("echo -n 'IncallMM9='; tinymix 'Incall_Music Audio Mixer MultiMedia9' 2>&1; ")
+                append("echo -n 'VocRecDL1='; tinymix 'MultiMedia1 Mixer VOC_REC_DL' 2>&1; ")
+                append("echo -n 'VocRecUL1='; tinymix 'MultiMedia1 Mixer VOC_REC_UL' 2>&1")
+            },
+            musicVolPercent = 20,
+            captureGain = 1,
+            playbackGain = 2,
+            noiseGateThreshold = 12,
+            echoGateThreshold = 300,
+            doubleTalkRatio = 1.5f,
+            requireSpeakerMode = true,
+            incallMusicParam = "incall_music_enabled",
+            voiceDownlinkWorks = true,
+            voiceCallVolPercent = 0,
+            playbackLeaksIntoCapture = false,
+            routeChangeDelayMs = 500,
+            audioRouteSettleDelayMs = 500,
             appopsPropagationMs = 300,
         )
 
