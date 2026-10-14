@@ -1571,6 +1571,24 @@ class GatewayService : Service() {
     // ── Network ─────────────────────────────────────────
 
     private fun getLocalIp(): String {
+        // A fixed address wins when the PBX is reached over another interface
+        // than the default network — e.g. a tunnel behind the router this
+        // phone tethers to, while the phone's own traffic goes out cellular.
+        // Only used while it is actually configured on an interface.
+        val fixed = getSharedPreferences("gateway", Context.MODE_PRIVATE)
+            .getString("local_ip", "")?.trim().orEmpty()
+        if (fixed.isNotEmpty()) {
+            val present = try {
+                NetworkInterface.getNetworkInterfaces().toList().any { iface ->
+                    iface.inetAddresses.toList().any { it.hostAddress == fixed }
+                }
+            } catch (e: Exception) {
+                false
+            }
+            if (present) return fixed
+            Log.w(TAG, "local_ip $fixed is not on any interface — using the active network")
+        }
+
         // Ask for the address of the network that actually carries our
         // traffic.  Enumerating interfaces and taking the first non-loopback
         // IPv4 could hand back the cellular rmnet address while SIP was
