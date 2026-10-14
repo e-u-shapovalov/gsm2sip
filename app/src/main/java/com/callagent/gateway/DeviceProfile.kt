@@ -1036,13 +1036,13 @@ data class DeviceProfile(
             mixerIncallMusicCmd = buildString {
                 // The phone itself stays silent: the HAL keeps the speaker
                 // path on (call in speaker mode, media on deep-buffer), and the
-                // Voice Rx/Tx Device Mutes do not hold on this firmware.  Cut
-                // the speaker at the QUAT_MI2S_RX mixers (TFA amp) and the mics
-                // at the decimators; Incall_Music and VOC_REC are DSP-side and
-                // do not pass through either.
-                append("tinymix 'QUAT_MI2S_RX_Voice Mixer VoiceMMode1' 0 2>/dev/null; ")
-                append("tinymix 'QUAT_MI2S_RX Audio Mixer MultiMedia1' 0 2>/dev/null; ")
-                append("tinymix 'QUAT_MI2S_RX Audio Mixer MultiMedia5' 0 2>/dev/null; ")
+                // Voice Rx/Tx Device Mutes do not hold on this firmware.
+                // Power the TFA speaker amp down rather than unrouting
+                // QUAT_MI2S_RX: the voice session is clocked by that port, and
+                // with 'QUAT_MI2S_RX_Voice Mixer VoiceMMode1' off VOC_REC_DL
+                // read zeros.  The mics go at the decimators; Incall_Music and
+                // VOC_REC are DSP-side and do not pass through them.
+                append("tinymix 'TFA Profile' 'Powerdown' 2>/dev/null; ")
                 for (d in 0..8) append("tinymix 'DEC$d Volume' 0 2>/dev/null; ")
                 append("tinymix 'Incall_Music Audio Mixer MultiMedia1' 1 1 2>/dev/null; ")
                 append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 1 1 2>/dev/null; ")
@@ -1063,13 +1063,13 @@ data class DeviceProfile(
             mixerCaptureCmd = buildString {
                 // The phone itself stays silent: the HAL keeps the speaker
                 // path on (call in speaker mode, media on deep-buffer), and the
-                // Voice Rx/Tx Device Mutes do not hold on this firmware.  Cut
-                // the speaker at the QUAT_MI2S_RX mixers (TFA amp) and the mics
-                // at the decimators; Incall_Music and VOC_REC are DSP-side and
-                // do not pass through either.
-                append("tinymix 'QUAT_MI2S_RX_Voice Mixer VoiceMMode1' 0 2>/dev/null; ")
-                append("tinymix 'QUAT_MI2S_RX Audio Mixer MultiMedia1' 0 2>/dev/null; ")
-                append("tinymix 'QUAT_MI2S_RX Audio Mixer MultiMedia5' 0 2>/dev/null; ")
+                // Voice Rx/Tx Device Mutes do not hold on this firmware.
+                // Power the TFA speaker amp down rather than unrouting
+                // QUAT_MI2S_RX: the voice session is clocked by that port, and
+                // with 'QUAT_MI2S_RX_Voice Mixer VoiceMMode1' off VOC_REC_DL
+                // read zeros.  The mics go at the decimators; Incall_Music and
+                // VOC_REC are DSP-side and do not pass through them.
+                append("tinymix 'TFA Profile' 'Powerdown' 2>/dev/null; ")
                 for (d in 0..8) append("tinymix 'DEC$d Volume' 0 2>/dev/null; ")
                 // Opening the capture front-end reprograms its mixers, and
                 // VOICE_CALL opens incall-rec-uplink-and-downlink: drop the
