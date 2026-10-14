@@ -104,6 +104,9 @@ fi
 if [ -f "$MODPATH/tinymix32" ]; then
     chmod 755 "$MODPATH/tinymix32"
 fi
+if [ -f "$MODPATH/mi6bridge" ]; then
+    chmod 755 "$MODPATH/mi6bridge"
+fi
 if [ -f "$MODPATH/tinycap" ]; then
     chmod 755 "$MODPATH/tinycap"
 fi

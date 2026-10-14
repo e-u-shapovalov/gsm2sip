@@ -58,6 +58,8 @@ class RtpSession(
     private var socket: DatagramSocket? = null
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
+    /** Raw ALSA path in place of [audioRecord]/[audioTrack]; see DeviceProfile.alsaBridge. */
+    @Volatile private var alsaBridge: AlsaBridge? = null
     /** 1 or 2, per [DeviceProfile.playbackStereo]. */
     private var playbackChannels = 1
 
@@ -317,6 +319,22 @@ class RtpSession(
         playbackRate = when (payloadType) {
             RtpPacket.PT_PCMA, RtpPacket.PT_PCMU -> 8000
             else -> 16000  // G.722
+        }
+
+        profile.alsaBridge?.let { cfg ->
+            // Both directions at the codec rate, mono: no resampling here.
+            val bridge = AlsaBridge(cfg, playbackRate)
+            if (!bridge.start()) {
+                listener?.onRtpError("ALSA bridge failed to start")
+                return false
+            }
+            alsaBridge = bridge
+            captureRate = playbackRate
+            playbackChannels = 1
+            audioSourceName = "ALSA_PCM${cfg.captureDevice}"
+            Log.i(TAG, "Audio init: ALSA bridge capture=PCM${cfg.captureDevice} " +
+                "playback=PCM${cfg.playbackDevice} rate=$playbackRate profile=${profile.name}")
+            return true
         }
 
         // Try telephony capture sources, then mic sources.
@@ -584,6 +602,10 @@ class RtpSession(
      * direction (GSM→SIP) takes longer to come up.
      */
     private fun captureInitAndLoop() {
+        if (alsaBridge != null) {
+            captureLoop()
+            return
+        }
         // Fast path: AudioRecord was already initialized in initAudio (warm boot)
         if (audioRecord != null) {
             if (captureLoop() || !running.get()) return
@@ -828,13 +850,17 @@ class RtpSession(
         workers = emptyList()
         val rec = audioRecord
         val trk = audioTrack
+        val bridge = alsaBridge
         audioRecord = null
         audioTrack = null
+        alsaBridge = null
         socket = null
         jitterBuffer.clear()
 
         Thread({
             val me = Thread.currentThread()
+            // First, so the capture thread blocked on the helper's pipe returns.
+            bridge?.stop()
             ws.forEach { if (it !== me) it.interrupt() }
             ws.forEach {
                 if (it === me) return@forEach
@@ -947,9 +973,11 @@ class RtpSession(
      * be replaced with a fallback source.
      */
     private fun captureLoop(): Boolean {
-        val record = audioRecord ?: return false
+        val bridge = alsaBridge
+        val record = audioRecord
+        if (record == null && bridge == null) return false
 
-        if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+        if (record != null && record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
             record.startRecording()
         }
 
@@ -964,8 +992,8 @@ class RtpSession(
             }, "mixer-capture").start()
         }
 
-        Log.i(TAG, "Capture routedFrom=${record.routedDevice?.type}")
-        Log.i(TAG, "Capture started: source=$audioSourceName capRate=$captureRate session=$audioSessionId gain=${captureGain}x profile=${profile.name} state=${record.recordingState}")
+        if (record != null) Log.i(TAG, "Capture routedFrom=${record.routedDevice?.type}")
+        Log.i(TAG, "Capture started: source=$audioSourceName capRate=$captureRate session=$audioSessionId gain=${captureGain}x profile=${profile.name} state=${record?.recordingState}")
         // Also report via RTP stats so it appears in the app log viewer
         listener?.onRtpStats("Capture: source=$audioSourceName rate=$captureRate gain=${captureGain}x profile=${profile.name}")
 
@@ -978,7 +1006,9 @@ class RtpSession(
         // answers "does this source work at all", which is only an open
         // question until the first frame arrives; after that, quiet means the
         // line is quiet.
-        var sourceProven = false
+        // The bridge has no fallback to switch to: silence before anyone
+        // speaks is just silence.
+        var sourceProven = bridge != null
         var lastDeadAirLog = 0L
 
         // Frame-rate watchdog.  The silence detector asks "is this source
@@ -988,11 +1018,18 @@ class RtpSession(
         // gappy uplink that makes an agent talk over itself.
         val captureStartMs = System.currentTimeMillis()
         var framesCaptured = 0L
-        var rateChecked = false
+        var rateChecked = bridge != null
 
         while (running.get()) {
             try {
-                val read = record.read(pcmBuf, 0, pcmBuf.size)
+                val read = if (bridge != null) bridge.read(pcmBuf) else record!!.read(pcmBuf, 0, pcmBuf.size)
+                if (read < 0 && bridge != null) {
+                    if (running.get()) {
+                        Log.e(TAG, "ALSA bridge capture ended")
+                        listener?.onRtpError("ALSA bridge capture ended")
+                    }
+                    return true
+                }
                 if (read <= 0) continue
                 framesCaptured++
 
@@ -1013,8 +1050,8 @@ class RtpSession(
                             Log.w(TAG, msg)
                             listener?.onRtpStats(msg)
                             silentSourceIds.add(currentSourceId)
-                            try { record.stop() } catch (_: Exception) {}
-                            record.release()
+                            try { record?.stop() } catch (_: Exception) {}
+                            record?.release()
                             audioRecord = null
                             return false
                         }
@@ -1069,8 +1106,8 @@ class RtpSession(
                                 Log.w(TAG, msg)
                                 listener?.onRtpStats(msg)
                                 silentSourceIds.add(currentSourceId)
-                                try { record.stop() } catch (_: Exception) {}
-                                record.release()
+                                try { record?.stop() } catch (_: Exception) {}
+                                record?.release()
                                 audioRecord = null
                                 return false  // Signal: try another source
                             }
@@ -1546,7 +1583,12 @@ class RtpSession(
     }
 
     private fun playbackLoop() {
-        val track = audioTrack ?: return
+        val bridge = alsaBridge
+        val track = audioTrack
+        if (track == null && bridge == null) return
+        val emit: (ByteArray) -> Unit =
+            if (bridge != null) { b -> bridge.write(b) } else { b -> writePlaybackFrame(track!!, b) }
+        if (track != null) {
 
         // No prefill — the silence-frame loop below feeds the AudioTrack
         // continuously, preventing underruns.  Removing the old 20ms prefill
@@ -1572,6 +1614,9 @@ class RtpSession(
         // already issues that command, and waiting for su -c was blocking
         // the playback thread for ~100ms.
         enableIncallMusicViaMixer()
+        } else {
+            Log.i(TAG, "Playback started (rate=$playbackRate ALSA bridge)")
+        }
 
         // Silence frame for when jitter buffer is empty — prevents underruns
         // that cause BUFFER TIMEOUT and AudioTrack disable/restart cycles.
@@ -1597,7 +1642,9 @@ class RtpSession(
                 val encoded = jitterBuffer.poll(JITTER_POLL_MS, TimeUnit.MILLISECONDS)
                 if (encoded == null) {
                     // Write silence to keep AudioTrack fed and prevent underruns.
-                    writePlaybackFrame(track, silenceFrame)
+                    // The bridge helper pads by itself; feeding it silence too
+                    // would only build up delay.
+                    if (bridge == null) emit(silenceFrame)
                     underruns++
                     playbackRms = 0
                     currentPlaybackActive = false
@@ -1663,7 +1710,7 @@ class RtpSession(
                 playbackRms = if (playbackGain > 1) pcmRms(pcm) else rawRms
                 feedMonitor(pcm)
                 val out = if (playbackChannels == 2) monoToStereo(pcm) else pcm
-                writePlaybackFrame(track, out)
+                emit(out)
                 playbackFrames++
             } catch (e: InterruptedException) {
                 break

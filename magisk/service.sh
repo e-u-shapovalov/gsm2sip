@@ -258,6 +258,20 @@ else
     log -t "$TAG" "tinycap: none available for ABI=$DEVICE_ABI — PCM probe will be skipped"
 fi
 
+# ── mi6bridge: raw ALSA in-call audio helper (arm64) ──
+# Used by profiles with an ALSA bridge (MSM8998), where the Android audio path
+# cannot reach the voice DSP.  Same deployment as tinymix.
+case "$DEVICE_ABI" in
+    arm64*|aarch64*)
+        if [ -f "$MODDIR/mi6bridge" ]; then
+            cp "$MODDIR/mi6bridge" /data/local/tmp/mi6bridge
+            chmod 755 /data/local/tmp/mi6bridge
+            chown root:root /data/local/tmp/mi6bridge
+            log -t "$TAG" "mi6bridge: installed to /data/local/tmp/mi6bridge"
+        fi
+        ;;
+esac
+
 # ── Log ALSA card info for diagnostics ────────────────
 ALSA_CARDS=$(cat /proc/asound/cards 2>/dev/null)
 if [ -n "$ALSA_CARDS" ]; then
