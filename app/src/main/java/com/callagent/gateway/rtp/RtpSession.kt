@@ -2268,18 +2268,25 @@ object PcmaCodec {
         7, 7, 7, 7, 7, 7, 7, 7
     )
 
+    /**
+     * G.711 A-law.  Below 256 the segment is always 0; the table lookup used to
+     * be applied there too, so every quiet sample (16..255, i.e. each zero
+     * crossing of speech) was coded as a loud one — 150 came out as 2240.  The
+     * uplink sounded like a radio at the edge of range: SNR -21..+16 dB on
+     * test tones against 23..38 dB for G.711.
+     */
     fun encodeSample(pcm: Short): Byte {
-        var sample = pcm.toInt()
-        val sign = (sample shr 8) and 0x80
-        if (sign != 0) sample = -sample
-        if (sample > 32635) sample = 32635
-
-        val exponent = if (sample >= 256) ALAW_ENCODE_TABLE[(sample shr 8) and 0x7F]
-        else ALAW_ENCODE_TABLE[(sample shr 4) and 0x1F].let { if (sample < 16) 0 else it }
-
-        val mantissa = if (exponent > 0) (sample shr (exponent + 3)) and 0x0F else (sample shr 4) and 0x0F
-        val encoded = (sign or (exponent shl 4) or mantissa) xor 0xD5
-        return encoded.toByte()
+        var linear = pcm.toInt()
+        val mask: Int
+        if (linear >= 0) {
+            mask = 0xD5
+        } else {
+            mask = 0x55
+            linear = -linear - 1
+        }
+        val seg = if (linear < 256) 0 else ALAW_ENCODE_TABLE[(linear shr 8) and 0x7F]
+        val mantissa = if (seg == 0) (linear shr 4) and 0x0F else (linear shr (seg + 3)) and 0x0F
+        return (((seg shl 4) or mantissa) xor mask).toByte()
     }
 
     fun decodeSample(alaw: Byte): Short {
