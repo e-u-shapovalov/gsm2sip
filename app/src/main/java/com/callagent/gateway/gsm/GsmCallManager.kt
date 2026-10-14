@@ -409,6 +409,7 @@ object GsmCallManager {
             null
         }
         val matches = mutableListOf<PhoneAccountHandle>()
+        val simAccounts = mutableListOf<PhoneAccountHandle>()
         for (account in accounts) {
             val subId = try {
                 tm.getSubscriptionId(account)
@@ -425,6 +426,7 @@ object GsmCallManager {
                 -1
             }
             if (slot < 0) continue
+            simAccounts += account
 
             val slotNumber = prefs.getString("own_number_slot_$slot", "")
                 ?.trim()
@@ -440,6 +442,13 @@ object GsmCallManager {
             } else {
                 Log.d(TAG, "SIM slot $slot candidate number=${configured.ifEmpty { "unset" }} did not match CID $outboundCid")
             }
+        }
+        // With a single SIM there is nothing to choose between.  A PBX
+        // passes its extension as the caller ID (666, not the SIM's MSISDN),
+        // and refusing that would make the gateway unusable as a plain trunk.
+        if (matches.isEmpty() && simAccounts.size == 1) {
+            Log.i(TAG, "Outbound CID $outboundCid matches no SIM — the only SIM is used")
+            return simAccounts.single()
         }
         if (matches.size != 1) {
             Log.w(TAG, "Outbound CID $outboundCid matched ${matches.size} SIM accounts; cannot select a unique SIM")
