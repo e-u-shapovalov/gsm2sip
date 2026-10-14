@@ -409,6 +409,10 @@ class GatewayService : Service() {
                 flushSmsQueue("received")
             }
             ACTION_DIAL -> dialFromDialler(intent)
+            ACTION_SMS_CALLBACK -> {
+                startForeground(activeNotificationId(), buildNotification(notifState))
+                smsCallback(intent)
+            }
             ACTION_MUTE_AGENT -> {
                 agentMuted = if (intent.hasExtra(EXTRA_MUTE_ON)) {
                     intent.getBooleanExtra(EXTRA_MUTE_ON, false)
@@ -1087,6 +1091,24 @@ class GatewayService : Service() {
                 if (ok) "acknowledged" else "not acknowledged (${if (code == 0) "no response" else code})"
         )
         return ok
+    }
+
+    /**
+     * Callback requested by SMS ("+++404+++"): ring the sender on GSM, and once
+     * they answer, put them through Asterisk to cb<number> — the dialplan
+     * decides how that is reached.
+     */
+    private fun smsCallback(intent: Intent?) {
+        val caller = intent?.getStringExtra(EXTRA_NUMBER)?.trim().orEmpty()
+        val target = intent?.getStringExtra(EXTRA_CALLBACK_TARGET)?.trim().orEmpty()
+        if (caller.isEmpty() || target.isEmpty()) return
+        val orch = orchestrator
+        if (orch == null) {
+            broadcastLog("SMS callback to $caller for $target: gateway not running")
+            return
+        }
+        broadcastLog("SMS callback: calling $caller, then Asterisk cb$target")
+        orch.initiateDiallerCall(caller, "cb$target")
     }
 
     private fun dialFromDialler(intent: Intent?) {
@@ -1898,6 +1920,8 @@ class GatewayService : Service() {
         const val LOG_ACTION = "com.callagent.gateway.LOG"
         const val ACTION_APPLY_CONFIG = "com.callagent.gateway.APPLY_CONFIG"
         const val ACTION_SMS_FLUSH = "com.callagent.gateway.SMS_FLUSH"
+        const val ACTION_SMS_CALLBACK = "com.callagent.gateway.SMS_CALLBACK"
+        const val EXTRA_CALLBACK_TARGET = "callback_target"
         const val ACTION_SMS_SEND = "com.callagent.gateway.SMS_SEND"
         const val ACTION_SMS_REPORT = "com.callagent.gateway.SMS_REPORT"
         const val EXTRA_SMS_ID = "sms_id"

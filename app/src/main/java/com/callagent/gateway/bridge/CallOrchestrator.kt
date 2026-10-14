@@ -61,6 +61,9 @@ class CallOrchestrator(
     @Volatile private var pendingIncoming: PendingIncoming? = null
 
     @Volatile private var diallerInitiated = false
+    /** Where the SIP leg of a dialler call goes; null = our own DID as usual.
+     *  Set for SMS-requested callbacks ("cb<number>"). */
+    @Volatile private var diallerSipTarget: String? = null
     @Volatile private var lastStateChangeTime = 0L
 
     // Pending RTP info: saved when SIP answers before GSM is picked up.
@@ -419,7 +422,7 @@ class CallOrchestrator(
     }
 
     /** Initiate an outgoing GSM call from the dialler, then bridge to SIP */
-    fun initiateDiallerCall(number: String) {
+    fun initiateDiallerCall(number: String, sipTarget: String? = null) {
         // MMI/USSD is not a call — it never produces a Telecom Connection, so
         // arming the bridge for it would strand us in GSM_DIALING until the
         // stale-state timeout.
@@ -445,8 +448,9 @@ class CallOrchestrator(
                 return
             }
         }
-        Log.i(TAG, "Dialler-initiated call to $number")
+        Log.i(TAG, "Dialler-initiated call to $number${sipTarget?.let { " (SIP target $it)" } ?: ""}")
         diallerInitiated = true
+        diallerSipTarget = sipTarget
         lastStateChangeTime = System.currentTimeMillis()
         bridgeState = BridgeState.GSM_DIALING
         listener?.onStateChanged(bridgeState, "Dialing $number")
@@ -854,8 +858,10 @@ class CallOrchestrator(
         listener?.onStateChanged(bridgeState, "Calling Asterisk for $callerNumber")
 
         val rtpPort = allocateRtpPort()
+        val target = diallerSipTarget ?: inboundSipDestination(gsmCall)
+        diallerSipTarget = null
         val sipCall = sipClient.makeCall(
-            targetExtension = inboundSipDestination(gsmCall),
+            targetExtension = target,
             localRtpPort = rtpPort,
             callerIdNumber = callerNumber,
             callerIdName = callerName

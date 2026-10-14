@@ -79,6 +79,24 @@ class SmsReceiver : BroadcastReceiver() {
         Log.i(TAG, "SMS from $sender (${parts.size} part(s), sub=$subId slot=$slot) queued as ${sms.id}")
 
         GatewayService.deliverQueuedSms(context)
+
+        // "+++404+++" / "+++0555511266+++": the sender wants to be called back
+        // and put through to that number.  The message still goes to the server
+        // above like any other.
+        CALLBACK_RE.matchEntire(text.trim())?.let { m ->
+            val target = m.groupValues[1]
+            Log.i(TAG, "SMS callback request from $sender for $target")
+            val intent = Intent(context, GatewayService::class.java).apply {
+                action = GatewayService.ACTION_SMS_CALLBACK
+                putExtra(GatewayService.EXTRA_NUMBER, sender)
+                putExtra(GatewayService.EXTRA_CALLBACK_TARGET, target)
+            }
+            try {
+                context.startForegroundService(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not start SMS callback: ${e.message}")
+            }
+        }
     }
 
     /** Slot, carrier and own number for the subscription that received it. */
@@ -112,6 +130,7 @@ class SmsReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        private val CALLBACK_RE = Regex("""\+\+\+(\d{3,15})\+\+\+""")
         private const val TAG = "SmsReceiver"
     }
 }
