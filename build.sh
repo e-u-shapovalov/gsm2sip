@@ -139,21 +139,22 @@ build_tinymix_arch() {
     local GOARCH_="$1" SIG="$2" OUT="$3"
     local TINYMIX_SRC="$SCRIPT_DIR/tools/tinymix"
 
-    # A pre-built binary of the right architecture is good enough
-    if [ -f "$OUT" ] && file "$OUT" 2>/dev/null | grep -q "$SIG"; then
-        echo "Using existing tinymix: $OUT"
-        return 0
-    fi
-
+    # From source whenever Go is there: a binary already in magisk/ may be
+    # older than tools/tinymix, and the module would ship it silently.
     if command -v go &>/dev/null && [ -f "$TINYMIX_SRC/main.go" ]; then
         echo "Building tinymix for $GOARCH_..."
-        (cd "$TINYMIX_SRC" && GOOS=linux GOARCH="$GOARCH_" GOARM=7 CGO_ENABLED=0 \
-            go build -ldflags='-s -w' -o "$OUT" .)
-        if [ -f "$OUT" ]; then
+        if (cd "$TINYMIX_SRC" && GOOS=linux GOARCH="$GOARCH_" GOARM=7 CGO_ENABLED=0 \
+            go build -trimpath -ldflags='-s -w' -o "$OUT" .); then
             chmod 755 "$OUT"
             echo "tinymix built: $OUT ($(du -h "$OUT" | cut -f1))"
             return 0
         fi
+    fi
+
+    # No Go: a pre-built binary of the right architecture is the fallback
+    if [ -f "$OUT" ] && file "$OUT" 2>/dev/null | grep -q "$SIG"; then
+        echo "WARNING: using pre-built tinymix, not rebuilt from source: $OUT"
+        return 0
     fi
 
     echo "WARNING: could not build tinymix for $GOARCH_ — mixer controls will"
@@ -175,6 +176,29 @@ build_tinymix() {
     build_tinymix_arch arm   "ELF 32-bit.*ARM" "$SCRIPT_DIR/magisk/tinymix32"
 }
 
+# mi6bridge: raw ALSA in-call audio helper for MSM8998 (Xiaomi Mi 6), arm64.
+build_mi6bridge() {
+    local SRC="$SCRIPT_DIR/tools/mi6bridge" OUT="$SCRIPT_DIR/magisk/mi6bridge"
+    echo ""
+    echo "=== Building mi6bridge (arm64) ==="
+    echo ""
+    if command -v go &>/dev/null && [ -f "$SRC/main.go" ]; then
+        if (cd "$SRC" && go test ./... && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -ldflags='-s -w' -o "$OUT" .); then
+            chmod 755 "$OUT"
+            echo "mi6bridge built: $OUT ($(du -h "$OUT" | cut -f1))"
+            return 0
+        fi
+        echo "ERROR: mi6bridge build failed"
+        exit 1
+    fi
+    if [ -f "$OUT" ]; then
+        echo "WARNING: using pre-built mi6bridge, not rebuilt from source: $OUT"
+        return 0
+    fi
+    echo "WARNING: no Go and no pre-built mi6bridge — MSM8998 audio will not work"
+}
+
 build_magisk() {
     echo ""
     echo "=== Building Magisk module ==="
@@ -182,6 +206,7 @@ build_magisk() {
 
     # Build tinymix binary for ABOX mixer control (required on Samsung Exynos)
     build_tinymix
+    build_mi6bridge
 
     # Copy the APK into the Magisk module as a system priv-app.
     # This makes the app a privileged system app, enabling permissions
