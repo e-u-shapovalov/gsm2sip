@@ -144,7 +144,7 @@ build_tinymix_arch() {
     if command -v go &>/dev/null && [ -f "$TINYMIX_SRC/main.go" ]; then
         echo "Building tinymix for $GOARCH_..."
         if (cd "$TINYMIX_SRC" && GOOS=linux GOARCH="$GOARCH_" GOARM=7 CGO_ENABLED=0 \
-            go build -trimpath -ldflags='-s -w' -o "$OUT" .); then
+            go build -trimpath -buildvcs=false -ldflags='-s -w' -o "$OUT" .); then
             chmod 755 "$OUT"
             echo "tinymix built: $OUT ($(du -h "$OUT" | cut -f1))"
             return 0
@@ -184,7 +184,7 @@ build_mi6bridge() {
     echo ""
     if command -v go &>/dev/null && [ -f "$SRC/main.go" ]; then
         if (cd "$SRC" && go test ./... && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-            go build -trimpath -ldflags='-s -w' -o "$OUT" .); then
+            go build -trimpath -buildvcs=false -ldflags='-s -w' -o "$OUT" .); then
             chmod 755 "$OUT"
             echo "mi6bridge built: $OUT ($(du -h "$OUT" | cut -f1))"
             return 0
