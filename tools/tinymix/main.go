@@ -13,6 +13,7 @@
 //   tinymix <id> <value>        — set control by numeric ID
 //   tinymix '<name>'            — get control by name
 //   tinymix '<name>' <value>    — set control by name (enum by name or index)
+//   tinymix '<name>' <v1> <v2>… — set each element; one value fills them all
 //   tinymix -e '<name>'         — dump enum items with hex (diagnostic)
 //   tinymix -D <card> ...       — use specific ALSA card
 package main
@@ -284,7 +285,11 @@ func getElemValue(fd int, id elemID) (elemValue, error) {
 	return val, err
 }
 
-func setElemValue(fd int, id elemID, info elemInfo, valueStr string) error {
+// setElemValue writes every element in a single ELEM_WRITE, without reading
+// the control first.  Voice mute controls (Voice Tx Device Mute and friends)
+// have no getter, so a read-modify-write fails with EPERM; they also need the
+// whole {mute, session_id, ramp_ms} vector at once.
+func setElemValue(fd int, id elemID, info elemInfo, values []string) error {
 	var val elemValue
 	val.ID = id
 
@@ -292,39 +297,51 @@ func setElemValue(fd int, id elemID, info elemInfo, valueStr string) error {
 	if limit := valueCapacity(info.Type); count > limit {
 		count = limit
 	}
+	if len(values) != 1 && uint32(len(values)) != count {
+		return fmt.Errorf("control has %d values, got %d", count, len(values))
+	}
+	// Single value: fill every element, as callers have always relied on.
+	at := func(i uint32) string {
+		if len(values) == 1 {
+			return values[0]
+		}
+		return values[i]
+	}
 
 	switch info.Type {
 	case SND_CTL_ELEM_TYPE_BOOLEAN:
-		v := int64(0)
-		if valueStr == "1" || strings.EqualFold(valueStr, "on") || strings.EqualFold(valueStr, "true") {
-			v = 1
-		}
 		for i := uint32(0); i < count; i++ {
+			valueStr := at(i)
+			v := int64(0)
+			if valueStr == "1" || strings.EqualFold(valueStr, "on") || strings.EqualFold(valueStr, "true") {
+				v = 1
+			}
 			putLong(val.Value[:], i, v)
 		}
 
 	case SND_CTL_ELEM_TYPE_INTEGER:
-		n, err := strconv.ParseInt(valueStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("invalid integer: %s", valueStr)
-		}
 		for i := uint32(0); i < count; i++ {
+			n, err := strconv.ParseInt(at(i), 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid integer: %s", at(i))
+			}
 			putLong(val.Value[:], i, n)
 		}
 
 	case SND_CTL_ELEM_TYPE_ENUMERATED:
 		// Enumerated uses unsigned int (4 bytes per value)
-		// Try as numeric index first
-		n, err := strconv.ParseUint(valueStr, 10, 32)
-		if err != nil {
-			// Not numeric — resolve enum name to index
-			idx, found := findEnumIndex(fd, id, info, valueStr)
-			if !found {
-				return fmt.Errorf("enum value '%s' not found (items: %d)", valueStr, info.enumItems())
-			}
-			n = uint64(idx)
-		}
 		for i := uint32(0); i < count; i++ {
+			valueStr := at(i)
+			// Try as numeric index first
+			n, err := strconv.ParseUint(valueStr, 10, 32)
+			if err != nil {
+				// Not numeric — resolve enum name to index
+				idx, found := findEnumIndex(fd, id, info, valueStr)
+				if !found {
+					return fmt.Errorf("enum value '%s' not found (items: %d)", valueStr, info.enumItems())
+				}
+				n = uint64(idx)
+			}
 			binary.LittleEndian.PutUint32(val.Value[i*4:], uint32(n))
 		}
 
@@ -509,10 +526,10 @@ func main() {
 		fmt.Printf("%s: %s\n", id.nameStr(), formatValue(fd, info, val))
 	} else {
 		// Set control value
-		err := setElemValue(fd, id, info, args[1])
+		err := setElemValue(fd, id, info, args[1:])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error setting control '%s' to '%s': %v\n",
-				controlName, args[1], err)
+				controlName, strings.Join(args[1:], " "), err)
 			os.Exit(1)
 		}
 		// Read back
