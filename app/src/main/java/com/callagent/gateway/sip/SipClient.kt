@@ -58,6 +58,8 @@ class SipClient(
     /** Pre-resolved server address — avoids DNS on main thread */
     @Volatile private var resolvedServerAddr: InetAddress? = null
     private val cseq = AtomicInteger(1)
+    /** CSeq of the last REGISTER that carried credentials. */
+    @Volatile private var authRegisterCseq = -1
     private var callIdBase = "${System.currentTimeMillis() / 1000}@$publicIp"
     private val running = AtomicBoolean(false)
     @Volatile var registered = false; private set
@@ -355,6 +357,13 @@ class SipClient(
             sendTo(ok, address)
             return
         }
+
+        // CANCEL for a call already gone (we rejected it first, or our 200
+        // was lost).  Unanswered, the server retransmits it for 32s.
+        if (msg.isRequest && msg.method == "CANCEL") {
+            sendTo(SipBuilder.statusResponse(msg, 481, "Call/Transaction Does Not Exist"), address)
+            return
+        }
     }
 
     // ── Registration ────────────────────────────────────
@@ -422,10 +431,12 @@ class SipClient(
     }
 
     private fun sendRegister(auth: String? = null) {
+        val n = cseq.getAndIncrement()
+        if (auth != null) authRegisterCseq = n
         val msg = SipBuilder.register(
             username, serverDomain, serverPort,
             publicIp, advertisedPort,
-            callIdBase, cseq.getAndIncrement(),
+            callIdBase, n,
             auth
         )
         sendTo(msg, serverAddress)
@@ -454,6 +465,16 @@ class SipClient(
                 true
             }
             401, 407 -> {
+                // A challenge to the REGISTER that already answered one means
+                // the credentials were refused.  Answering it again would loop
+                // at network speed -- exactly what fail2ban bans for -- so
+                // fail this attempt and let the backoff start a fresh one.
+                val n = msg.cseq?.split(" ")?.firstOrNull()?.toIntOrNull()
+                if (n != null && n == authRegisterCseq) {
+                    uiLog("REGISTER ${msg.statusCode}: credentials rejected")
+                    registrationLatch?.countDown()
+                    return false
+                }
                 uiLog("REGISTER ${msg.statusCode} challenge, sending auth")
                 val authParams = SipAuth.parseChallenge(msg)
                 if (authParams != null) {

@@ -187,8 +187,12 @@ class SipCall(
                 return true
             }
 
-            // 401/407 Auth required for INVITE
-            msg.isResponse && (msg.statusCode == 401 || msg.statusCode == 407) -> {
+            // 401/407 Auth required for INVITE.  A challenge on the CSeq of the
+            // INVITE that already carried credentials is the server refusing
+            // them, not a retransmission: let it fall through to the error
+            // branch so the call ends now instead of hanging until a timeout.
+            msg.isResponse && (msg.statusCode == 401 || msg.statusCode == 407) &&
+                !(authHandled && msg.cseq != null && msg.cseq == originalInvite?.cseq) -> {
                 if (authHandled) {
                     // UDP retransmission of the original 401 — ignore it.
                     // We already sent an authenticated re-INVITE; sending another
@@ -430,6 +434,13 @@ class SipCall(
      */
     fun hangup() {
         if (state == State.TERMINATED) return
+
+        // CANCEL belongs to the side that sent the INVITE.  For one we
+        // received and never answered, the way out is a final response.
+        if (direction == Direction.INBOUND && state != State.ANSWERED) {
+            reject(487, "Request Terminated")
+            return
+        }
 
         if (state != State.ANSWERED) {
             val invite = originalInvite
