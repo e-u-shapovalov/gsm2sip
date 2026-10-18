@@ -53,8 +53,10 @@ class GoipLink(
 
     @Volatile var registered = false; private set
     @Volatile private var running = false
-    private var socket: DatagramSocket? = null
-    private var server: InetAddress? = null
+    @Volatile private var socket: DatagramSocket? = null
+    @Volatile private var server: InetAddress? = null
+    /** Last reg:...status:200; a line the server stopped answering is not registered. */
+    @Volatile private var lastRegMs = 0L
     private val seq = AtomicInteger((System.currentTimeMillis() / 1000 % 100000).toInt())
     private val smsNo = AtomicInteger(0)
     private val acks = ConcurrentHashMap<String, CountDownLatch>()
@@ -63,7 +65,11 @@ class GoipLink(
 
     private class Session(val id: String) {
         var text: String = ""
+        /** The server answered PASSWORD correctly; SEND is refused before that. */
+        var authorized = false
         var submitted = false
+        /** OK/ERROR already sent for this session, repeated until DONE. */
+        @Volatile var result: String? = null
         @Volatile var lastSeen = System.currentTimeMillis()
     }
 
@@ -91,12 +97,19 @@ class GoipLink(
                 val s = (if (localIp.isNotEmpty()) DatagramSocket(java.net.InetSocketAddress(localIp, 0))
                          else DatagramSocket()).apply { soTimeout = 1000 }
                 socket = s
+                lastRegMs = System.currentTimeMillis()
                 listener.onLog("GoIP: line $line -> $host:$port from ${s.localSocketAddress}")
                 Thread({ receiveLoop(s) }, "goip-recv").start()
                 while (running) {
                     sendKeepalive()
                     sleepQuiet(KEEPALIVE_MS)
                     sessions.values.removeAll { System.currentTimeMillis() - it.lastSeen > SESSION_TTL_MS }
+                    // Errors on an open UDP socket are swallowed by send() and
+                    // receive(), so silence from the server is the only sign the
+                    // path broke.  Reopen, which also resolves the host again.
+                    if (System.currentTimeMillis() - lastRegMs > REG_TTL_MS) {
+                        throw java.io.IOException("no reg from server for ${REG_TTL_MS / 1000}s")
+                    }
                 }
             } catch (e: Exception) {
                 registered = false
@@ -110,10 +123,14 @@ class GoipLink(
 
     private fun receiveLoop(s: DatagramSocket) {
         val buf = ByteArray(4096)
-        while (running) {
+        // Exits with its socket: runLoop opens a new one (and a new thread) on reconnect.
+        while (running && !s.isClosed) {
             try {
                 val p = DatagramPacket(buf, buf.size)
                 s.receive(p)
+                // Only the server: PASSWORD guards SEND, this keeps anyone else
+                // who can reach the port from even starting a session.
+                if (p.address != server || p.port != port) continue
                 handle(String(p.data, 0, p.length, Charsets.UTF_8).trimEnd('\r', '\n'))
             } catch (_: SocketTimeoutException) {
             } catch (e: Exception) {
@@ -155,6 +172,7 @@ class GoipLink(
             val ok = p.contains("status:200")
             if (ok != registered) listener.onLog("GoIP: line $line ${if (ok) "registered" else "rejected: $p"}")
             registered = ok
+            if (ok) lastRegMs = System.currentTimeMillis()
             return
         }
         // Never the password: PASSWORD and USSD packets carry it.
@@ -178,13 +196,25 @@ class GoipLink(
             "PASSWORD" -> {
                 val sess = sessions[id] ?: return
                 sess.lastSeen = System.currentTimeMillis()
-                if (tok.getOrNull(2) == password) send("SEND $id") else send("ERROR $id PASSWORD")
+                if (tok.getOrNull(2) == password) {
+                    sess.authorized = true
+                    send("SEND $id")
+                } else {
+                    sessions.remove(id)
+                    send("ERROR $id PASSWORD")
+                }
             }
             "SEND" -> {
                 val sess = sessions[id] ?: return
+                if (!sess.authorized) {
+                    sessions.remove(id)
+                    send("ERROR $id PASSWORD")
+                    return
+                }
                 val ref = tok.getOrNull(2) ?: return
                 val number = tok.getOrNull(3) ?: return
                 sess.lastSeen = System.currentTimeMillis()
+                sess.result?.let { send(it); return }  // the OK/ERROR got lost: say it again
                 send("WAIT $id $ref")
                 if (sess.submitted) return       // a repeated SEND must not send twice
                 sess.submitted = true
@@ -210,7 +240,21 @@ class GoipLink(
 
     /** The modem took the message (or refused it). */
     fun reportSent(session: String, ref: String, ok: Boolean, smsNo: Int, error: Int) {
-        if (ok) send("OK $session $ref $smsNo") else send("ERROR $session $ref errorstatus:$error")
+        val msg = if (ok) "OK $session $ref $smsNo" else "ERROR $session $ref errorstatus:$error"
+        val sess = sessions[session]
+        sess?.result = msg
+        send(msg)
+        if (sess == null) return
+        // The server waits for exactly one OK/ERROR and never repeats SEND, so
+        // one lost datagram turns a sent SMS into a timeout there.  Repeat
+        // until its DONE closes the session.
+        Thread({
+            repeat(RESULT_TRIES) {
+                sleepQuiet(RESULT_WAIT_MS)
+                if (!running || sessions[session] !== sess) return@Thread
+                send(msg)
+            }
+        }, "goip-result").start()
     }
 
     /** Delivery report; state 0 = delivered, otherwise the TP-Status. */
@@ -222,10 +266,16 @@ class GoipLink(
         )
     }
 
-    /** Hand an inbound SMS to the server; true once it acknowledged. */
-    fun deliverInbound(from: String, text: String): Boolean {
+    /**
+     * Hand an inbound SMS to the server; true once it acknowledged.
+     *
+     * [key] is the queue item's id and becomes the RECEIVE number, so a retry
+     * after lost acks is the same packet to the server, which drops repeats by
+     * line and number, and not a second copy of the message.
+     */
+    fun deliverInbound(key: String, from: String, text: String): Boolean {
         if (!registered) return false
-        val n = seq.incrementAndGet().toString()
+        val n = key.filter { it.isLetterOrDigit() }.take(32).ifEmpty { seq.incrementAndGet().toString() }
         return sendAcked(
             "RECEIVE", n,
             "RECEIVE:$n;id:$line;password:$password;srcnum:$from;msg:$text"
@@ -285,6 +335,10 @@ class GoipLink(
         private const val KEEPALIVE_MS = 20_000L
         private const val RETRY_MS = 10_000L
         private const val SESSION_TTL_MS = 10 * 60_000L
+        /** Three keepalives without a reg reply. */
+        private const val REG_TTL_MS = 3 * KEEPALIVE_MS + 5_000L
+        private const val RESULT_TRIES = 4
+        private const val RESULT_WAIT_MS = 2_000L
         private const val ACK_TRIES = 5
         private const val ACK_WAIT_MS = 3_000L
     }

@@ -969,7 +969,7 @@ class GatewayService : Service() {
         broadcastLog("SMS: to GoIP server ${queue.size} message(s) [$reason]")
         markInboxRead()
         for (sms in queue) {
-            if (goip.deliverInbound(sms.from, sms.text)) {
+            if (goip.deliverInbound(sms.id, sms.from, sms.text)) {
                 SmsStore.remove(this, sms.id)
                 broadcastLog("SMS: ${sms.id} from ${sms.from} accepted by GoIP server")
             } else {
