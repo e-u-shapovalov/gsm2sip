@@ -1,7 +1,7 @@
 // mi6bridge moves in-call audio between the gateway and the voice DSP on
 // MSM8998 (Xiaomi Mi 6) through raw ALSA PCM, bypassing AudioRecord and
 // AudioTrack: on this platform the Android path either opens the wrong HAL
-// usecase (VOICE_DOWNLINK -> afe-proxy-record) or plays the agent on the
+// usecase (VOICE_DOWNLINK -> afe-proxy-record) or plays the SIP side on the
 // speaker instead of the uplink.
 //
 // Capture PCM (MultiMedia9 + VOC_REC_DL) is written to stdout, stdin is played
@@ -177,7 +177,7 @@ func (p *pcm) transfer(ctx context.Context, data []int16) error {
 	return nil
 }
 
-// fifo holds agent audio between stdin and the playback PCM, bounded so a
+// fifo holds SIP audio between stdin and the playback PCM, bounded so a
 // burst from the network cannot turn into permanent delay.
 type fifo struct {
 	mu      sync.Mutex
@@ -280,7 +280,7 @@ func run() error {
 	rate := flag.Int("rate", 8000, "sample rate on stdin/stdout: 8000 or 16000")
 	capRate := flag.Int("cap-rate", 48000, "capture PCM rate, a multiple of -rate")
 	periodMs := flag.Int("period-ms", 20, "period length")
-	maxQueueMs := flag.Int("max-queue-ms", 200, "agent audio kept ahead of playback")
+	maxQueueMs := flag.Int("max-queue-ms", 200, "SIP audio kept ahead of playback")
 	flag.Parse()
 	if unsafe.Sizeof(hwParams{}) != 608 || unsafe.Sizeof(swParams{}) != 136 || unsafe.Sizeof(transfer{}) != 24 {
 		return errors.New("requires the 64-bit ALSA ABI")
