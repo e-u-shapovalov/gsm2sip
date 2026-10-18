@@ -577,7 +577,7 @@ class GatewayService : Service() {
      * dialplan.  Request-URI addresses the SIM's own number where the SIM
      * reports one, falling back to the configured own number and then to the
      * SIP account — the same routing key an inbound *call* uses, so the server
-     * can map an SMS to an assistant exactly as it maps a call.
+     * can route an SMS exactly as it routes a call.
      */
     private fun sendSmsOverSip(sip: SipClient, sms: PendingSms): Int {
         val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
@@ -859,7 +859,7 @@ class GatewayService : Service() {
      *
      * With one SIM this is just own_number.  With more than one it has to be
      * the number of the SIM the message actually arrived on or left by, or
-     * the server maps it to the wrong assistant -- both SIMs reach the same
+     * the server routes it to the wrong place -- both SIMs reach the same
      * gateway, and only the number distinguishes them.  Falls back to the
      * single legacy value whenever the SIM cannot be resolved.
      */

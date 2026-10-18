@@ -499,7 +499,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="Sent as the SIP destination so the server can map the call to an assistant. Without it the gateway addresses its own extension and the call loops back."
+                            android:text="Sent as the SIP destination so the server can route the call. Without it the gateway addresses its own extension and the call loops back."
                             android:textSize="12sp"
                             android:textColor="@color/text_hint"
                             android:paddingTop="6dp" />

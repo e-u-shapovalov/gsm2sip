@@ -16,7 +16,7 @@ Bridges Android phone to any SIP server as GSM Gateway
 
 A dedicated rooted Android phone with a local SIM card acts as a SIP-to-GSM gateway:
 
-- **Inbound**: Someone calls the SIM's number → the phone answers → the call is bridged to the SIP server, which routes it wherever the dialplan says (an AI agent, a queue, an extension)
+- **Inbound**: Someone calls the SIM's number → the phone answers → the call is bridged to the SIP server, which routes it wherever the dialplan says (an IVR, a queue, an extension)
 - **Outbound**: the SIP server sends an INVITE with an `X-GSM-Forward: +<number>` header → the phone dials that number over GSM → audio is bridged back to SIP
 - **SMS**: messages arriving on any SIM are forwarded to the server as SIP MESSAGE, and the server can ask the gateway to send one and be told what became of it — see [SMS over SIP](#sms-over-sip)
 
@@ -192,7 +192,7 @@ there is nothing to write on the server side:
 
 The gateway is server-agnostic — it registers like any SIP client — so you can
 point it at a server you run instead. What follows is one worked example,
-using Asterisk (chan_sip) to route inbound GSM calls to an AI agent. Adapt it
+using Asterisk (chan_sip) to route inbound GSM calls to an application. Adapt it
 to whatever your server does.
 
 It addresses calls the way a VoIP router does: the Request-URI carries the

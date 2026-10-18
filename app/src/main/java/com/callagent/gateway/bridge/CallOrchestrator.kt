@@ -282,7 +282,7 @@ class CallOrchestrator(
     /**
      * The number this gateway answers on, sent as the SIP destination.
      *
-     * The server maps an incoming number to an assistant the same way it does
+     * The server maps an incoming number to a route the same way it does
      * a Fritz!Box DID, so it needs the MSISDN of our SIM here.  Addressing our
      * own SIP account instead makes the platform see account N calling account
      * N, match it as a local peer and ring us straight back — the INVITE comes

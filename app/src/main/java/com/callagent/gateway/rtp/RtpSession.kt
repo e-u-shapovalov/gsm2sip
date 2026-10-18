@@ -349,7 +349,7 @@ class RtpSession(
         // digital capture of the caller's voice.  Requires CAPTURE_AUDIO_OUTPUT.
         if (wideband) {
             // G.722: prefer 16kHz native capture — avoids upsampling artifacts
-            // in the 4-8kHz upper band that cause AI agent false interruptions.
+            // in the 4-8kHz upper band that trigger false barge-in on the far side.
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL@16k", 16000))
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL", 8000))
         } else {

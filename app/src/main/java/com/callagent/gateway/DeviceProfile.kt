@@ -177,7 +177,7 @@ data class DeviceProfile(
      *  For handsets where VOICE_CALL opens and reports a plausible level but
      *  does not deliver frames at a steady 50/s.  That failure is invisible to
      *  the silence detector -- there *is* audio, it simply arrives in bursts --
-     *  and the resulting gappy uplink reads to an AI agent's barge-in detector
+     *  and the resulting gappy uplink reads to a voice application's barge-in detector
      *  as the caller interrupting, so it stops mid-sentence.  Measured on the
      *  S4 Mini: VOICE_CALL@16k sent 1173 packets where 1676 arrived, while
      *  VOICE_RECOGNITION on the same call sent 1650 of 1675.
