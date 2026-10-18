@@ -237,7 +237,7 @@ existing settings and file ownership, then reopen the app.
 | `goip_port` | `int` | `44444` | UDP port. |
 | `goip_line` | `string` | `Mi6` | Line identifier on the server. |
 | `goip_pass` | `string` | Your line password | Must match the server's line configuration. |
-| `local_ip` | `string` | A local interface address | Optional source address shared with SIP, for example on a routed tunnel. |
+| `local_ip` | `string` | A local interface address | Optional source address shared with SIP, when the server is reached through another interface. |
 
 XML entries inside the existing `<map>` element:
 
@@ -253,8 +253,10 @@ there is no automatic fallback to SIP when that server is unavailable.
 Leave GoIP unconfigured to use SIP MESSAGE. The current GoIP path uses Android's
 default SMS subscription and does not expose per-line SIM selection.
 
-The GoIP UDP protocol carries credentials and message content in plain text.
-Use a trusted network or a VPN for this connection.
+The GoIP UDP protocol carries credentials and message content in plain text,
+so keep this connection on a network you trust. The gateway accepts packets
+only from the configured server address and port, and sends an SMS only after
+the server has given the line password.
 
 Run these API examples on the goip-bridge host, using its HTTP token:
 
