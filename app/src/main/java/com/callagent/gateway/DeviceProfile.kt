@@ -1022,7 +1022,9 @@ data class DeviceProfile(
                 append("echo -n 'VocVSID='; tinymix 'Voc VSID' 2>&1; ")
                 append("echo -n 'MM9_DL='; tinymix 'MultiMedia9 Mixer VOC_REC_DL' 2>&1; ")
                 append("echo -n 'MM9_UL='; tinymix 'MultiMedia9 Mixer VOC_REC_UL' 2>&1; ")
-                append("echo -n 'IncallMM2='; tinymix 'Incall_Music Audio Mixer MultiMedia2' 2>&1")
+                append("echo -n 'IncallMM2='; tinymix 'Incall_Music Audio Mixer MultiMedia2' 2>&1; ")
+                append("echo -n 'DEC7='; tinymix 'DEC7 Volume' 2>&1; ")
+                append("echo -n 'DEC8='; tinymix 'DEC8 Volume' 2>&1")
             },
             alsaBridge = AlsaBridgeConfig(
                 captureDevice = 27,
@@ -1035,12 +1037,21 @@ data class DeviceProfile(
                     append("tinymix 'MultiMedia9 Mixer VOC_REC_DL' 0; ")
                     append("tinymix 'MultiMedia9 Mixer VOC_REC_DL' 1; ")
                     append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 0; ")
-                    append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 1")
+                    append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 1; ")
+                    // Handset mics (ADC3 -> DEC7, ADC5 -> DEC8) mix the room into
+                    // the uplink.  Decimator gain 0 = -84 dB; the injection enters
+                    // CVS past the codec, and the HAL never rewrites DEC volume
+                    // on the handset paths.  Reads back as 256 while muted.
+                    append("tinymix 'DEC7 Volume' 0; ")
+                    append("tinymix 'DEC8 Volume' 0")
                 },
                 restoreCmd = buildString {
                     append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 0; ")
                     append("tinymix 'MultiMedia9 Mixer VOC_REC_DL' 0; ")
-                    append("tinymix 'MultiMedia9 Mixer VOC_REC_UL' 0")
+                    append("tinymix 'MultiMedia9 Mixer VOC_REC_UL' 0; ")
+                    // 84 = 0 dB, the mixer_paths_tasha.xml boot value.
+                    append("tinymix 'DEC7 Volume' 84; ")
+                    append("tinymix 'DEC8 Volume' 84")
                 },
             ),
             musicVolPercent = 20,
