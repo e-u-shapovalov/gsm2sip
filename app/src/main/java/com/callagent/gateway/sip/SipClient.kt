@@ -60,6 +60,8 @@ class SipClient(
     private val cseq = AtomicInteger(1)
     /** CSeq of the last REGISTER that carried credentials. */
     @Volatile private var authRegisterCseq = -1
+    /** Credentialed REGISTERs challenged again within this attempt. */
+    @Volatile private var authRechallenges = 0
     private var callIdBase = "${System.currentTimeMillis() / 1000}@$publicIp"
     private val running = AtomicBoolean(false)
     @Volatile var registered = false; private set
@@ -432,7 +434,7 @@ class SipClient(
 
     private fun sendRegister(auth: String? = null) {
         val n = cseq.getAndIncrement()
-        if (auth != null) authRegisterCseq = n
+        if (auth != null) authRegisterCseq = n else authRechallenges = 0
         val msg = SipBuilder.register(
             username, serverDomain, serverPort,
             publicIp, advertisedPort,
@@ -465,12 +467,14 @@ class SipClient(
                 true
             }
             401, 407 -> {
-                // A challenge to the REGISTER that already answered one means
-                // the credentials were refused.  Answering it again would loop
-                // at network speed -- exactly what fail2ban bans for -- so
-                // fail this attempt and let the backoff start a fresh one.
+                // A challenge to a REGISTER that already carried credentials.
+                // Askozia does this to every other refresh and accepts the
+                // next credentialed one, so answer it once more.  A second
+                // one in a row means the credentials were refused: answering
+                // again would loop at network speed -- exactly what fail2ban
+                // bans for -- so fail this attempt and let the backoff retry.
                 val n = msg.cseq?.split(" ")?.firstOrNull()?.toIntOrNull()
-                if (n != null && n == authRegisterCseq) {
+                if (n != null && n == authRegisterCseq && authRechallenges++ >= 1) {
                     uiLog("REGISTER ${msg.statusCode}: credentials rejected")
                     registrationLatch?.countDown()
                     return false
