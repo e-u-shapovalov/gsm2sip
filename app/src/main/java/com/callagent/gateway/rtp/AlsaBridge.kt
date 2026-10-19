@@ -18,6 +18,9 @@ import java.io.OutputStream
  */
 class AlsaBridge(private val config: AlsaBridgeConfig, val rate: Int) {
 
+    /** Key press of the GSM party: digit, true on press, false on release. */
+    @Volatile var onDtmf: ((Char, Boolean) -> Unit)? = null
+
     private var process: Process? = null
     private var input: DataInputStream? = null
     private var output: OutputStream? = null
@@ -37,9 +40,10 @@ class AlsaBridge(private val config: AlsaBridgeConfig, val rate: Int) {
         Log.i(TAG, "Routes armed: ${routes.trim().replace('\n', ' ')}")
 
         return try {
+            val dtmf = if (config.modemDtmf) " -dtmf" else ""
             val p = ProcessBuilder(
                 "su", "-c",
-                "exec $bin -in ${config.captureDevice} -out ${config.playbackDevice} -rate $rate"
+                "exec $bin -in ${config.captureDevice} -out ${config.playbackDevice} -rate $rate$dtmf"
             ).start()
             process = p
             input = DataInputStream(p.inputStream)
@@ -98,7 +102,12 @@ class AlsaBridge(private val config: AlsaBridgeConfig, val rate: Int) {
 
     private fun pumpLog(stream: InputStream) {
         try {
-            stream.bufferedReader().forEachLine { Log.i(TAG, "helper: $it") }
+            stream.bufferedReader().forEachLine { line ->
+                Log.i(TAG, "helper: $line")
+                DTMF_LINE.find(line)?.let { m ->
+                    onDtmf?.invoke(m.groupValues[2][0], m.groupValues[1] == "start")
+                }
+            }
         } catch (_: Exception) {
         }
     }
@@ -106,5 +115,6 @@ class AlsaBridge(private val config: AlsaBridgeConfig, val rate: Int) {
     companion object {
         private const val TAG = "AlsaBridge"
         private val HELPER_PATHS = listOf("/data/local/tmp/mi6bridge")
+        private val DTMF_LINE = Regex("""DTMF (start|stop) ([0-9*#A-D])$""")
     }
 }

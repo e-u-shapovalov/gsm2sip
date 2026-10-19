@@ -281,6 +281,7 @@ func run() error {
 	capRate := flag.Int("cap-rate", 48000, "capture PCM rate, a multiple of -rate")
 	periodMs := flag.Int("period-ms", 20, "period length")
 	maxQueueMs := flag.Int("max-queue-ms", 200, "SIP audio kept ahead of playback")
+	dtmf := flag.Bool("dtmf", false, "log the GSM party's key presses reported by the modem (QMI VOICE)")
 	flag.Parse()
 	if unsafe.Sizeof(hwParams{}) != 608 || unsafe.Sizeof(swParams{}) != 136 || unsafe.Sizeof(transfer{}) != 24 {
 		return errors.New("requires the 64-bit ALSA ABI")
@@ -307,6 +308,10 @@ func run() error {
 		return err
 	}
 	defer in.close()
+
+	if *dtmf {
+		go watchDtmf(ctx)
+	}
 
 	queue := &fifo{limit: *rate * *maxQueueMs / 1000}
 	var captured, played, starved atomic.Int64

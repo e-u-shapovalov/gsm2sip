@@ -960,6 +960,8 @@ class CallOrchestrator(
         // the payload type the server named in its SDP as well as our own 101.
         val dtmfPt = activeSipCall?.telephoneEventPt ?: RtpPacket.PT_TELEPHONE_EVENT
         session.telephoneEventPts = setOf(dtmfPt, RtpPacket.PT_TELEPHONE_EVENT)
+        // And the GSM party's keys the other way, on the server's payload type.
+        session.txTelephoneEventPt = dtmfPt
         session.dtmfDetector = DtmfDetector(
             onBegin = { digit -> GsmCallManager.dtmfRelay.begin(digit) },
             onEnd = { digit, _ -> GsmCallManager.dtmfRelay.end(digit) }

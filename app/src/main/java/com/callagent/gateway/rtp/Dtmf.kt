@@ -50,7 +50,7 @@ object Rfc4733 {
         else -> null // 16 = flash and the tone events are not dial-pad keys
     }
 
-    /** Inverse of [toChar], for building test packets. */
+    /** Inverse of [toChar]. */
     fun fromChar(c: Char): Int? = when (c) {
         in '0'..'9' -> c - '0'
         '*' -> 10

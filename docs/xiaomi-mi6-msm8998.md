@@ -102,10 +102,14 @@ before tuning the profile from the app's logs.
    direction sounded like a radio at the edge of range (SNR −21…+16 dB on test
    tones vs 23…38 dB for G.711). The decoder was correct, so the other
    direction was clean. Test codecs on all 65536 input values.
-9. **DTMF from the GSM caller is not delivered over VoLTE** on this modem:
-   RFC 4733 events stay in IMS, there is no in-band tone in the downlink and no
-   event to Android. IVR "call and dial an extension" does not work; DTMF
-   towards the GSM side (`playDtmfTone`) does.
+9. **DTMF from the GSM caller over VoLTE** never shows up as audio: the RFC
+   4733 events stay in IMS, and there is no in-band tone in the downlink and
+   no event to Android telephony. The modem does report every key press as
+   `QMI_VOICE_DTMF_IND` (events 8/9, start/stop) to any QMI VOICE client
+   registered for DTMF. `mi6bridge -dtmf` registers one and the app sends the
+   digits to the PBX as RFC 4733 (since 1.0.2). The voice service requires the
+   radio/net_raw groups (`/vendor/etc/sec_config`). DTMF towards the GSM side
+   uses `playDtmfTone`.
 10. The logcat ring buffer is small (256 KB) and a restart loses it: run
     `logcat -G 16M` before a test call and save the log before restarting.
 

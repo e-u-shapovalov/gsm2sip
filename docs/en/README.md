@@ -428,10 +428,12 @@ build will not replace a downloaded APK if their signing keys differ.
 | SMS waits in the queue | The selected transport must be available: SIP registration or the configured GoIP server. |
 | Call fails while using mobile data | Check that voice stays on LTE and that the data path to the PBX remains available. |
 
-On the tested Mi 6 VoLTE setup, **DTMF from the mobile caller does not reach
-the gateway**. An inbound IVR cannot rely on those keypad presses; SMS callback
-provides another way to choose a destination. DTMF from SIP towards the mobile
-call is supported.
+On Mi 6, **DTMF from the mobile caller works on VoLTE** since 1.0.2: the
+modem reports each key press over QMI and `mi6bridge -dtmf` passes it on, so
+the PBX receives RFC 4733 events and an inbound IVR can read them (see the
+[mi6bridge README](../../tools/mi6bridge/README.md)). On other phones keypad
+presses from the mobile caller are not delivered. DTMF from SIP towards the
+mobile call is supported everywhere.
 
 For Mi 6 PCM devices, mixer controls and audio diagnostics, see
 [Mi 6 technical notes](../xiaomi-mi6-msm8998.md).

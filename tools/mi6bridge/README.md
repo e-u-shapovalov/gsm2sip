@@ -58,7 +58,7 @@ app ◄─stdout (S16_LE mono, 8 kHz)─── FIR 48→8 kHz ◄──── PC
 - The app (`rtp/AlsaBridge.kt`) sets the routes on every call and starts it as
   root:
   ```
-  exec /data/local/tmp/mi6bridge -in 27 -out 1 -rate 8000
+  exec /data/local/tmp/mi6bridge -in 27 -out 1 -rate 8000 -dtmf
   ```
   Its stderr goes to logcat prefixed with `helper:`.
 - After the call the app closes stdin, makes sure the process is gone
@@ -75,9 +75,36 @@ app ◄─stdout (S16_LE mono, 8 kHz)─── FIR 48→8 kHz ◄──── PC
 | `-cap-rate` | `48000` | capture rate, a multiple of `-rate` |
 | `-period-ms` | `20` | period length |
 | `-max-queue-ms` | `200` | how much SIP audio to keep ahead of playback |
+| `-dtmf` | off | report the GSM caller's key presses (see below) |
 
 On another phone the PCM numbers are almost certainly different — check
 `cat /proc/asound/pcm` and verify the routes on a live call.
+
+## Key presses of the GSM caller
+
+On VoLTE the caller's keys arrive as RFC 4733 telephone-events that the
+modem's IMS stack consumes: there is no tone in the downlink audio and nothing
+reaches Android telephony. The modem still reports every key press as a
+`QMI_VOICE_DTMF_IND` indication (events `IP_INCOMING_DTMF_START` / `STOP`) to
+any QMI VOICE client registered for DTMF events. On this ROM nobody uses it.
+
+With `-dtmf` the helper registers its own client through the msm IPC router
+(`AF_MSM_IPC`, QMI VOICE service 9) and logs:
+
+```
+DTMF ready (voice 0:0x3d)
+DTMF start 5
+DTMF stop 5
+```
+
+The app turns these lines into RFC 4733 packets on the SIP leg, using the
+payload type from the server's SDP. While a key is down those packets replace
+the audio.
+
+The voice service only accepts clients in the `radio` (1001) or `net_raw`
+(3004) groups (`/vendor/etc/sec_config`), so the helper adds them to itself.
+If the client cannot register, it logs `DTMF off: …` and the audio keeps
+working.
 
 ## Log
 

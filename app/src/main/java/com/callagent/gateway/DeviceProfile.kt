@@ -25,12 +25,16 @@ import android.util.Log
  * but the kernel routes work, the helper reads the downlink record front-end
  * and writes the Incall_Music front-end directly.  [setupCmd] arms the routes
  * before the helper opens the PCMs, [restoreCmd] disarms them after.
+ *
+ * [modemDtmf]: the helper also reports the GSM party's key presses, which the
+ * modem announces over QMI VOICE (on VoLTE they never reach the audio).
  */
 data class AlsaBridgeConfig(
     val captureDevice: Int,
     val playbackDevice: Int,
     val setupCmd: String,
     val restoreCmd: String,
+    val modemDtmf: Boolean = false,
 )
 
 data class DeviceProfile(
@@ -1053,6 +1057,7 @@ data class DeviceProfile(
                     append("tinymix 'DEC7 Volume' 84; ")
                     append("tinymix 'DEC8 Volume' 84")
                 },
+                modemDtmf = true,
             ),
             musicVolPercent = 20,
             captureGain = 1,

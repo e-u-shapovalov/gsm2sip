@@ -112,6 +112,63 @@ class RtpSession(
     @Volatile var rxDtmfPackets = 0L
         private set
 
+    // Key presses of the GSM party → the SIP side as RFC 4733.  The payload
+    // type is the peer's from its SDP.  While a key is down the capture loop
+    // sends events in place of audio, on the audio's own sequence and clock.
+    @Volatile var txTelephoneEventPt: Int = RtpPacket.PT_TELEPHONE_EVENT
+    @Volatile var txDtmfPackets = 0L
+        private set
+
+    private class TxDtmf(val event: Int, val digit: Char) {
+        var startTs = -1L
+        @Volatile var released = false
+        var endDuration = -1
+        var endLeft = 3
+    }
+    private val txDtmfQueue = java.util.concurrent.ConcurrentLinkedQueue<TxDtmf>()
+    @Volatile private var txDtmf: TxDtmf? = null
+
+    fun beginTxDtmf(digit: Char) {
+        val event = Rfc4733.fromChar(digit) ?: return
+        txDtmfQueue.add(TxDtmf(event, digit))
+    }
+
+    fun endTxDtmf(digit: Char) {
+        val cur = txDtmf
+        if (cur != null && cur.digit == digit && !cur.released) {
+            cur.released = true
+            return
+        }
+        txDtmfQueue.lastOrNull { it.digit == digit && !it.released }?.released = true
+    }
+
+    /** Next telephone-event packet to send in place of audio, or null. */
+    private fun nextTxDtmf(): RtpPacket? {
+        var ev = txDtmf
+        if (ev == null) {
+            ev = txDtmfQueue.poll() ?: return null
+            txDtmf = ev
+        }
+        val first = ev.startTs < 0
+        if (first) ev.startTs = txTimestamp
+        // Duration covers this packet too: 160 per 20ms at the 8 kHz clock.
+        var duration = (txTimestamp - ev.startTs + 160).toInt()
+        if (duration >= TX_DTMF_MAX_DURATION) ev.released = true
+        val payload = if (ev.released) {
+            if (ev.endDuration < 0) ev.endDuration = duration
+            duration = ev.endDuration
+            if (--ev.endLeft <= 0) {
+                txDtmf = null
+                Log.i(TAG, "DTMF to SIP: ${ev.digit} (${duration / 8} ms)")
+            }
+            Rfc4733.build(ev.event, true, TX_DTMF_VOLUME, duration)
+        } else {
+            Rfc4733.build(ev.event, false, TX_DTMF_VOLUME, duration)
+        }
+        txDtmfPackets++
+        return RtpPacket(txTelephoneEventPt, txSequence, ev.startTs, txSsrc, payload, marker = first)
+    }
+
     /**
      * Encrypt if this call is protected, then send.
      *
@@ -324,6 +381,7 @@ class RtpSession(
         profile.alsaBridge?.let { cfg ->
             // Both directions at the codec rate, mono: no resampling here.
             val bridge = AlsaBridge(cfg, playbackRate)
+            bridge.onDtmf = { digit, down -> if (down) beginTxDtmf(digit) else endTxDtmf(digit) }
             if (!bridge.start()) {
                 listener?.onRtpError("ALSA bridge failed to start")
                 return false
@@ -1209,7 +1267,8 @@ class RtpSession(
                 val destAddr = latchedAddr ?: defaultRemoteInet
                 val destPort = if (latchedAddr != null) latchedPort else remotePort
 
-                val packet = RtpPacket(payloadType, txSequence, txTimestamp, txSsrc, encoded)
+                val packet = nextTxDtmf()
+                    ?: RtpPacket(payloadType, txSequence, txTimestamp, txSsrc, encoded)
                 val data = packet.encode()
                 sendRtp(data, destAddr, destPort)
 
@@ -2234,6 +2293,11 @@ class RtpSession(
          *  anyway.  A capture read is one 20ms frame and the playback poll is
          *  18ms, so a healthy loop is gone well inside this. */
         private const val JOIN_TIMEOUT_MS = 400L
+
+        /** A key whose release never arrives is ended after 5s (8 kHz units). */
+        private const val TX_DTMF_MAX_DURATION = 5 * 8000
+        /** -10 dBm0, the level RFC 4733 implementations commonly send. */
+        private const val TX_DTMF_VOLUME = 10
 
         /** Jitter buffer ceiling, in 20ms frames (240ms). */
         private const val JITTER_CAPACITY = 12
